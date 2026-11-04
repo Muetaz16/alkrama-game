@@ -303,7 +303,7 @@ public class WeaponController : MonoBehaviour
         var style = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(h * 0.032f), alignment = TextAnchor.LowerRight, fontStyle = FontStyle.Bold };
         var small = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(h * 0.022f) };
         Shadowed(new Rect(w - 420, h - 110, 400, 90), $"{W.name}\n{(reloading ? "RELOADING" : $"{W.mag} / {W.reserve}")}", style);
-        Shadowed(new Rect(20, h - 70, 1200, 60), "LMB fire · RMB aim · R reload · 1/2 weapon · Shift sprint · C crouch · Space jump" + (lastShot != "" ? $"   last shot: {lastShot}" : ""), small);
+        Shadowed(new Rect(20, h - 70, 1200, 60), "LMB fire · RMB aim · R reload · 1/2 weapon · Shift sprint · C crouch · Space jump · M mark spot" + (lastShot != "" ? $"   last shot: {lastShot}" : ""), small);
     }
 
     // white text with a dark shadow so it reads on bright stone and sky

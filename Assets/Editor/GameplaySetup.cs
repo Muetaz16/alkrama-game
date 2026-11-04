@@ -9,6 +9,7 @@ public static class GameplaySetup
     {
         var player = GameObject.Find("Player");
         if (!player.GetComponent<WeaponController>()) player.AddComponent<WeaponController>();
+        if (!player.GetComponent<MarkerTool>()) player.AddComponent<MarkerTool>();
 
         var old = GameObject.Find("Practice Targets"); if (old) Object.DestroyImmediate(old);
         var root = new GameObject("Practice Targets");
