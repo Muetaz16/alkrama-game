@@ -30,6 +30,10 @@ public class ThirdPersonCamera : MonoBehaviour
             if (Mouse.current != null) d += Mouse.current.delta.ReadValue() * mouseSensitivity;
             if (Gamepad.current != null) d += Gamepad.current.rightStick.ReadValue() * stickSensitivity * Time.deltaTime;
             if (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame) { Cursor.lockState = CursorLockMode.None; Cursor.visible = true; }
+            // click in the window to grab the mouse again
+            if (Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame && Cursor.lockState != CursorLockMode.Locked)
+            { Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false; }
+            if (Cursor.lockState != CursorLockMode.Locked && Mouse.current != null) d -= Mouse.current.delta.ReadValue() * mouseSensitivity;   // don't spin while the mouse is free
         }
         yaw += d.x;
         pitch = Mathf.Clamp(pitch - d.y, minPitch, maxPitch);
