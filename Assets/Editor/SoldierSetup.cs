@@ -15,7 +15,7 @@ public static class SoldierSetup
     const string Model = Dir + "/Soldier.fbx";
     const string Anims = Dir + "/Animations";
     const string ControllerPath = Dir + "/Soldier.controller";
-    const string PrefabPath = "Assets/Benghazi/Player.prefab";
+    public const string PrefabPath = "Assets/Benghazi/Player.prefab";
     const string ScenePath = "Assets/Scenes/Corniche.unity";
 
     public static void Run()
@@ -189,7 +189,7 @@ public static class SoldierSetup
         var s = hand.lossyScale.x; if (s > 0) rifle.transform.localScale = Vector3.one / s;
     }
 
-    static void PlaceInScene(GameObject prefab)
+    public static void PlaceInScene(GameObject prefab)
     {
         var scene = EditorSceneManager.OpenScene(ScenePath);
         foreach (var name in new[] { "Player", "AutoTest" })

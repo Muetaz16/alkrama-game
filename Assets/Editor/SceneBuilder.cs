@@ -141,7 +141,7 @@ public static class SceneBuilder
 
     // lighthouse spot from the exported game data; the web game uses x east / z south and
     // glTFast mirrors x on import, so a web point (x, z) is (-x, z) here
-    static Vector3 FindLighthouse()
+    public static Vector3 FindLighthouse()
     {
         var json = File.ReadAllText(Root + "/Data/benghazi_corniche_spawns.json");
         var data = JsonUtility.FromJson<Spawns>(json);
@@ -203,7 +203,7 @@ public static class SceneBuilder
     }
 
     // JsonUtility can't read nested arrays, so pull "sea": [[x0,x1,z0,z1], ...] out by hand
-    static List<float[]> ParseSea()
+    public static List<float[]> ParseSea()
     {
         var json = File.ReadAllText(Root + "/Data/benghazi_corniche.json");
         int a = json.IndexOf("\"sea\":"); a = json.IndexOf('[', a);
@@ -221,7 +221,7 @@ public static class SceneBuilder
     [System.Serializable] class MapLandmark { public string type; public float[] seaDir; }
     [System.Serializable] class MapData { public float half; public float seaCell; public MapLandmark[] landmarks; }
 
-    static void Shoot(Camera cam, string file)
+    public static void Shoot(Camera cam, string file)
     {
         const int w = 1600, h = 900;
         var rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32);
