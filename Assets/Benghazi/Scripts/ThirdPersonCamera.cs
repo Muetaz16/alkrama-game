@@ -13,7 +13,7 @@ public class ThirdPersonCamera : MonoBehaviour
     public bool externalInput;
     [HideInInspector] public Vector2 lookDelta;   // degrees, for AutoTest / touch
 
-    float yaw;
+    [HideInInspector] public float yaw;
 
     void Start()
     {

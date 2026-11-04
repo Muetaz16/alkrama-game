@@ -19,6 +19,9 @@ public static class LookUpgrade
         SceneBuilder.Build();
         SoldierSetup.PlaceInScene(AssetDatabase.LoadAssetAtPath<GameObject>(SoldierSetup.PrefabPath));
         Run();
+        var scene = EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
+        GameplaySetup.Run();
+        EditorSceneManager.SaveScene(scene);
     }
 
     const string Root = "Assets/Benghazi";
@@ -325,14 +328,20 @@ public static class LookUpgrade
                 var tex = src.GetTexture("baseColorTexture");
                 var tn = tex ? tex.name : "";
                 var c = src.GetColor("baseColorFactor");
+                var path = NamePath(r.transform);
                 Material dst = null;
-                if (!tex && size.x > 1000 && Near(c, 0.33f, 0.32f, 0.29f)) { dst = Lit("Asphalt", "asphalt_02", new Color(0.82f, 0.8f, 0.78f), 0.18f, 1f); PlanarUV(r, 0.18f); }
+                if (path.Contains("palm_green")) dst = Frond("FrondGreen", "FrondGreen", Color.white);
+                else if (path.Contains("palm_dry")) dst = Frond("FrondDry", "FrondDry", Color.white);
+                else if (path.Contains("palm_burnt")) dst = Frond("FrondBurnt", "FrondBurnt", Color.white);
+                else if (path.Contains("palm_trunk")) continue;
+                else if (path.Contains("roads") || (path.Contains("roundabout") && !tex && Near(c, 0.23f, 0.23f, 0.23f))) { dst = Lit("Asphalt", "asphalt_02", new Color(0.82f, 0.8f, 0.78f), 0.18f, 1f); PlanarUV(r, 0.18f); }
+                else if (!tex && size.x > 1000 && Near(c, 0.33f, 0.32f, 0.29f)) { dst = Lit("Asphalt", "asphalt_02", new Color(0.82f, 0.8f, 0.78f), 0.18f, 1f); PlanarUV(r, 0.18f); }
                 else if (tn == "image_24" || (!tex && size.x > 100 && size.z > 200 && Near(c, 0.89f, 0.87f, 0.82f))) { dst = Lit("SeaWall", "plastered_wall_02", new Color(1.04f, 1.03f, 1.0f), 0.25f, 0.5f); PlanarUV(r, 0.25f); }
                 else if (tn == "image_25") { dst = Lit("Promenade", "large_grey_tiles", new Color(1.35f, 1.32f, 1.25f), 0.22f, 0.8f); PlanarUV(r, 0.22f); }
                 else if (tex && size.x > 300 && (tex.width == 128 || tex.width == 64 || tex.width == 512) && tn != "image_25") dst = Facade(src);
-                else if (tn == "image_27") dst = Frond("FrondGreen", "FrondGreen", Color.white);
-                else if (tn == "image_28") dst = Frond("FrondDry", "FrondDry", Color.white);
-                else if (tn == "image_29") dst = Frond("FrondBurnt", "FrondBurnt", Color.white);
+                else if (false && tn == "image_27") dst = Frond("FrondGreen", "FrondGreen", Color.white);
+                else if (false && tn == "image_28") dst = Frond("FrondDry", "FrondDry", Color.white);
+                else if (false && tn == "image_29") dst = Frond("FrondBurnt", "FrondBurnt", Color.white);
                 else if (!tex && (Near(c, 0.31f, 0.29f, 0.27f) || Near(c, 0.56f, 0.54f, 0.51f))) dst = Lit("Rock", "rock_boulder_dry", new Color(0.85f, 0.82f, 0.78f), 0.15f, 1.2f);
                 else if (!tex && Near(c, 0.60f, 0.55f, 0.45f)) dst = Lit("Rubble", "concrete_wall_008", new Color(0.86f, 0.8f, 0.68f), 0.08f, 1f);
                 else if (!tex && size.x > 30 && size.y < 3 && Near(c, 0.91f, 0.89f, 0.85f)) { dst = Lit("LighthouseBase", "concrete_wall_008", new Color(0.98f, 0.96f, 0.92f), 0.1f, 0.8f); PlanarUV(r, 0.35f); }
@@ -347,6 +356,8 @@ public static class LookUpgrade
         }
         Debug.Log($"[look] materials replaced {changed}");
     }
+
+    static string NamePath(Transform t) { var s = ""; for (; t; t = t.parent) s += t.name + "/"; return s; }
 
     // new UVs in metres from world position, picked per vertex by the normal (floors use x/z, walls use the wall plane)
     static void PlanarUV(Renderer r, float scale)
@@ -363,7 +374,9 @@ public static class LookUpgrade
             uv[i] = a.y >= a.x && a.y >= a.z ? new Vector2(p.x, p.z) : a.x >= a.z ? new Vector2(p.z, p.y) : new Vector2(p.x, p.y);
             uv[i] *= scale;
         }
-        m.uv = uv; m.RecalculateTangents();
+        m.uv = uv;
+        if (m.bounds.size.y < 0.2f) m.normals = Enumerable.Repeat(Vector3.up, v.Length).ToArray();   // flat floors: all normals up
+        m.RecalculateTangents();
         AssetDatabase.CreateAsset(m, AssetDatabase.GenerateUniqueAssetPath($"{Mats}/Mesh_{r.name}.asset"));
         mf.sharedMesh = m;
         var mc = r.GetComponent<MeshCollider>(); if (mc) mc.sharedMesh = m;

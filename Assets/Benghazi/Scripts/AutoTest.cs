@@ -48,9 +48,66 @@ public class AutoTest : MonoBehaviour
         yield return null;
     }
 
+    // point the camera at a world position
+    void LookAt(Vector3 p)
+    {
+        var pivot = player.transform.position + Quaternion.Euler(0, cam.yaw, 0) * cam.shoulder;
+        var d = p - pivot;
+        cam.yaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
+        cam.pitch = -Mathf.Atan2(d.y, new Vector2(d.x, d.z).magnitude) * Mathf.Rad2Deg;
+    }
+
+    IEnumerator Shooting()
+    {
+        var gun = player.GetComponent<WeaponController>();
+        if (!gun) yield break;
+        gun.externalInput = true;
+        var targets = FindObjectsByType<Damageable>(FindObjectsSortMode.None);
+        System.Array.Sort(targets, (a, b) => Vector3.Distance(a.transform.position, player.transform.position).CompareTo(Vector3.Distance(b.transform.position, player.transform.position)));
+        log.WriteLine($"targets: {targets.Length}");
+        if (targets.Length == 0) yield break;
+        // rifle: aim at a near target, short burst
+        var near = targets[Mathf.Min(1, targets.Length - 1)];
+        log.WriteLine("target distances: " + string.Join(", ", System.Array.ConvertAll(targets, x => Vector3.Distance(x.transform.position, player.transform.position).ToString("F0"))));
+        LookAt(near.transform.position + Vector3.up * 0.55f);
+        gun.aimHeld = true;
+        yield return new WaitForSeconds(0.6f);
+        LookAt(near.transform.position + Vector3.up * 0.55f);
+        int before = gun.hits;
+        gun.fireHeld = true;
+        yield return new WaitForSeconds(0.25f);
+        yield return Shot("shoot_rifle.png");
+        yield return new WaitForSeconds(0.35f);
+        gun.fireHeld = false; gun.aimHeld = false;
+        log.WriteLine($"rifle burst at {Vector3.Distance(near.transform.position, player.transform.position):F0} m: {gun.hits - before} hits, mag {gun.W.mag}");
+        yield return new WaitForSeconds(0.5f);
+        // sniper: farthest target, scope in, one shot
+        var far = targets[targets.Length - 1];
+        gun.switchTo = 1;
+        yield return null;
+        LookAt(far.transform.position + Vector3.up * 0.55f);
+        gun.aimHeld = true;
+        yield return new WaitForSeconds(0.9f);
+        LookAt(far.transform.position + Vector3.up * 0.6f);
+        yield return null;
+        yield return Shot("shoot_scope.png");
+        before = gun.hits;
+        gun.fireHeld = true; yield return null; yield return null;
+        yield return new WaitForSeconds(0.3f);
+        log.WriteLine($"sniper at {Vector3.Distance(far.transform.position, player.transform.position):F0} m: {gun.hits - before} hits");
+        gun.aimHeld = false; gun.fireHeld = false;
+        gun.reloadPressed = true;
+        yield return new WaitForSeconds(0.6f);
+        yield return Shot("shoot_after.png");
+        gun.switchTo = 0;
+        gun.externalInput = false;
+        log.Flush();
+    }
+
     IEnumerator Run()
     {
         yield return new WaitForSeconds(1.5f);
+        yield return Shooting();
         yield return Shot("play_start.png");
         yield return Step("idle", Vector2.zero, 1f);
         yield return Step("walk", Vector2.up, 2f, walk: true);
