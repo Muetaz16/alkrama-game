@@ -15,6 +15,11 @@ public class PlayerController : MonoBehaviour
     [HideInInspector] public Vector2 moveInput;  // -1..1, from keyboard/stick (or AutoTest)
     [HideInInspector] public bool sprint, walk, crouch, jumpPressed;
     public bool externalInput;                   // AutoTest / touch controls drive the inputs
+    [HideInInspector] public float combatUntil;  // the weapon keeps the body facing the crosshair until then
+    public bool combat { get; private set; }
+    public float Speed { get; private set; }
+    public bool Sprinting { get; private set; }
+    Transform model; float lean;
 
     CharacterController cc;
     Animator anim;
@@ -28,6 +33,7 @@ public class PlayerController : MonoBehaviour
     {
         cc = GetComponent<CharacterController>();
         anim = GetComponentInChildren<Animator>();
+        model = anim ? anim.transform : null;
         yaw = transform.eulerAngles.y;
     }
 
@@ -36,15 +42,22 @@ public class PlayerController : MonoBehaviour
         if (!externalInput) ReadInput();
         float dt = Time.deltaTime;
 
-        // target speed for this gait
+        // two ways of moving, like modern shooters:
+        //  combat (aiming / just fired / crouched): body faces the crosshair, strafes and backpedals
+        //  free-run: body turns to face where it runs, so it always uses the forward run/sprint cycles
+        combat = combatUntil > Time.time || crouch;
         float speed = crouch ? CrouchSpeed : walk ? WalkSpeed : RunSpeed;
         var input = Vector2.ClampMagnitude(moveInput, 1f);
-        bool sprinting = sprint && !crouch && input.y > 0.5f;
-        if (sprinting) speed = SprintSpeed;
+        bool sprinting = sprint && !crouch && (combat ? input.y > 0.5f : input.magnitude > 0.5f);
+        if (sprinting) { speed = SprintSpeed; combatUntil = 0; combat = crouch; }
 
         var look = Quaternion.Euler(0, yaw, 0);
         var wish = look * new Vector3(input.x, 0, input.y) * speed;
-        velocity = Vector3.MoveTowards(velocity, wish, acceleration * speed * 0.35f * dt);
+        // quick to start, a little slower to stop and to change direction at speed (weight)
+        float rate = wish.sqrMagnitude > velocity.sqrMagnitude ? 2.2f : 3.2f;
+        if (Vector3.Dot(wish, velocity) < 0) rate = 4.5f;
+        velocity = Vector3.MoveTowards(velocity, wish, rate * Mathf.Max(speed, RunSpeed) * dt);
+        Speed = velocity.magnitude; Sprinting = sprinting && Speed > RunSpeed + 0.5f;
 
         // gravity and jumping
         if (cc.isGrounded && vy < 0) vy = -2f;
@@ -57,16 +70,25 @@ public class PlayerController : MonoBehaviour
         vy += gravity * dt;
         cc.Move((velocity + Vector3.up * vy) * dt);
 
-        // face the camera direction (strafe shooter); sprinting turns into the run direction a bit
-        var face = yaw;
-        if (sprinting && velocity.sqrMagnitude > 1f) face = Mathf.LerpAngle(yaw, Quaternion.LookRotation(velocity).eulerAngles.y, 0.35f);
-        transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.Euler(0, face, 0), turnSpeed * dt);
+        // facing: crosshair in combat, run direction otherwise (stand still = keep facing)
+        float before = transform.eulerAngles.y;
+        if (combat) transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.Euler(0, yaw, 0), turnSpeed * dt);
+        else if (velocity.sqrMagnitude > 0.3f)
+        {
+            var target = Quaternion.LookRotation(new Vector3(velocity.x, 0, velocity.z));
+            float turnRate = Mathf.Lerp(720f, 380f, Mathf.InverseLerp(RunSpeed, SprintSpeed, Speed));   // wider turns at sprint
+            transform.rotation = Quaternion.RotateTowards(transform.rotation, target, turnRate * dt);
+        }
+        // lean into turns
+        float turn = Mathf.DeltaAngle(before, transform.eulerAngles.y) / Mathf.Max(dt, 1e-4f);
+        lean = Mathf.Lerp(lean, Mathf.Clamp(-turn * 0.03f * Mathf.InverseLerp(1f, SprintSpeed, Speed), -12f, 12f), 1 - Mathf.Exp(-8 * dt));
+        if (model) model.localRotation = Quaternion.Euler(0, 0, lean);
 
         if (anim)
         {
             var local = transform.InverseTransformDirection(velocity);
-            anim.SetFloat(VelX, local.x, 0.08f, dt);
-            anim.SetFloat(VelZ, local.z, 0.08f, dt);
+            anim.SetFloat(VelX, local.x, 0.12f, dt);
+            anim.SetFloat(VelZ, local.z, 0.12f, dt);
             anim.SetBool(Grounded, cc.isGrounded);
             anim.SetBool(Crouch, crouch);
         }

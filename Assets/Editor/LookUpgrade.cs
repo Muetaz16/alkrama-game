@@ -301,11 +301,11 @@ public static class LookUpgrade
         m.SetTexture("_BaseMap", tex);
         var st = src.GetVector("baseColorTexture_ST");
         m.SetTextureScale("_BaseMap", new Vector2(st.x, st.y)); m.SetTextureOffset("_BaseMap", new Vector2(st.z, st.w));
-        m.SetColor("_BaseColor", (Color)src.GetColor("baseColorFactor") * new Color(0.93f, 0.85f, 0.72f));   // Benghazi sandstone, not white
+        m.SetColor("_BaseColor", (Color)src.GetColor("baseColorFactor") * new Color(0.80f, 0.71f, 0.58f));   // Benghazi sandstone, not white
         m.SetFloat("_Smoothness", 0.12f);
         m.SetTexture("_DetailAlbedoMap", AssetDatabase.LoadAssetAtPath<Texture2D>($"{PH}/plastered_wall_02_diff_1k.jpg"));
         m.SetTexture("_DetailNormalMap", AssetDatabase.LoadAssetAtPath<Texture2D>($"{PH}/plastered_wall_02_nor_gl_1k.jpg"));
-        m.SetFloat("_DetailAlbedoMapScale", 0.8f); m.SetFloat("_DetailNormalMapScale", 0.9f);
+        m.SetFloat("_DetailAlbedoMapScale", 0.3f);   // the x2 detail brightens; keep it subtle m.SetFloat("_DetailNormalMapScale", 0.9f);
         m.SetTextureScale("_DetailAlbedoMap", new Vector2(1.5f, 1.5f));
         m.EnableKeyword("_DETAIL_MULX2");
         EditorUtility.SetDirty(m);
@@ -336,9 +336,9 @@ public static class LookUpgrade
                 else if (path.Contains("palm_trunk")) continue;
                 else if (path.Contains("roads") || (path.Contains("roundabout") && !tex && Near(c, 0.23f, 0.23f, 0.23f))) { dst = Lit("Asphalt", "asphalt_02", new Color(0.82f, 0.8f, 0.78f), 0.18f, 1f); PlanarUV(r, 0.18f); }
                 else if (!tex && size.x > 1000 && Near(c, 0.33f, 0.32f, 0.29f)) { dst = Lit("Asphalt", "asphalt_02", new Color(0.82f, 0.8f, 0.78f), 0.18f, 1f); PlanarUV(r, 0.18f); }
-                else if (tn == "image_24" || (!tex && size.x > 100 && size.z > 200 && Near(c, 0.89f, 0.87f, 0.82f))) { dst = Lit("SeaWall", "plastered_wall_02", new Color(1.04f, 1.03f, 1.0f), 0.25f, 0.5f); PlanarUV(r, 0.25f); }
-                else if (tn == "image_25") { dst = Lit("Promenade", "large_grey_tiles", new Color(1.35f, 1.32f, 1.25f), 0.22f, 0.8f); PlanarUV(r, 0.22f); }
-                else if (tex && size.x > 300 && (tex.width == 128 || tex.width == 64 || tex.width == 512) && tn != "image_25") dst = Facade(src);
+                else if ((tex && tex.width == 64 && tex.height == 64 && size.y > 0.5f && size.y < 3f && Mathf.Max(size.x, size.z) > 100) || (!tex && size.x > 100 && size.z > 200 && Near(c, 0.89f, 0.87f, 0.82f))) { dst = Lit("SeaWall", "plastered_wall_02", new Color(1.04f, 1.03f, 1.0f), 0.25f, 0.5f); PlanarUV(r, 0.25f); }
+                else if (tex && tex.width == 256 && tex.height == 256 && size.y < 0.5f && size.x > 50) { dst = Lit("Promenade", "large_grey_tiles", new Color(1.35f, 1.32f, 1.25f), 0.22f, 0.8f); PlanarUV(r, 0.22f); }
+                else if (tex && size.y > 2f && (tex.width == 128 || tex.width == 512 || (tex.width == 64 && tex.height == 64)) && !path.Contains("palm")) dst = Facade(src);   // walls: houses, mosques, ruins
                 else if (false && tn == "image_27") dst = Frond("FrondGreen", "FrondGreen", Color.white);
                 else if (false && tn == "image_28") dst = Frond("FrondDry", "FrondDry", Color.white);
                 else if (false && tn == "image_29") dst = Frond("FrondBurnt", "FrondBurnt", Color.white);
@@ -355,6 +355,13 @@ public static class LookUpgrade
             r.sharedMaterials = mats;
         }
         Debug.Log($"[look] materials replaced {changed}");
+        // what is still on the imported glTF look (to catch white / untreated buildings)
+        foreach (var gr in city.GetComponentsInChildren<MeshRenderer>(true).SelectMany(r => r.sharedMaterials.Where(m => m && m.HasProperty("baseColorFactor")).Select(m => (r, m)))
+            .Where(x => x.m.GetTexture("baseColorTexture")).GroupBy(x => x.m.GetTexture("baseColorTexture").name).OrderByDescending(g => g.Sum(x => x.r.bounds.size.magnitude)).Take(12))
+        {
+            var t = gr.First().m.GetTexture("baseColorTexture");
+            Debug.Log($"[look] untreated {gr.Key} {t.width}x{t.height} x{gr.Count()} eg {NamePath(gr.First().r.transform)} size {gr.First().r.bounds.size:F0}");
+        }
     }
 
     static string NamePath(Transform t) { var s = ""; for (; t; t = t.parent) s += t.name + "/"; return s; }
@@ -400,7 +407,7 @@ public static class LookUpgrade
     static void Environment()
     {
         var sun = Object.FindFirstObjectByType<Light>();
-        sun.intensity = 1.35f; sun.color = new Color(1f, 0.92f, 0.78f);
+        sun.intensity = 1.22f; sun.color = new Color(1f, 0.92f, 0.78f);
         sun.transform.rotation = Quaternion.Euler(32f, -40f, 0f);
         sun.shadowStrength = 0.85f;
         RenderSettings.ambientIntensity = 1f;

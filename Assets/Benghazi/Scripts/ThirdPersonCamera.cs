@@ -14,6 +14,9 @@ public class ThirdPersonCamera : MonoBehaviour
     [HideInInspector] public Vector2 lookDelta;   // degrees, for AutoTest / touch
 
     [HideInInspector] public float yaw;
+    [HideInInspector] public bool aimingFov;      // the weapon owns the field of view while aiming
+    [HideInInspector] public float baseFov = 65f;
+    Vector3 smoothPos, smoothVel; float bobPhase;
 
     void Start()
     {
@@ -40,7 +43,14 @@ public class ThirdPersonCamera : MonoBehaviour
         target.yaw = yaw;
 
         var rot = Quaternion.Euler(pitch, yaw, 0);
-        var pivot = target.transform.position + Quaternion.Euler(0, yaw, 0) * shoulder;
+        // the camera trails the body a touch (weight), bobs with the stride and widens when sprinting
+        smoothPos = Vector3.SmoothDamp(smoothPos == Vector3.zero ? target.transform.position : smoothPos, target.transform.position, ref smoothVel, 0.06f);
+        float sp = target.Speed;
+        bobPhase += Time.deltaTime * Mathf.Lerp(0f, 11f, sp / PlayerController.SprintSpeed) * (sp > 0.5f ? 1 : 0);
+        var bob = new Vector3(Mathf.Sin(bobPhase) * 0.03f, Mathf.Abs(Mathf.Cos(bobPhase)) * 0.05f, 0) * Mathf.InverseLerp(0.5f, PlayerController.SprintSpeed, sp);
+        var cam = GetComponent<Camera>();
+        if (cam && !aimingFov) cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, baseFov + (target.Sprinting ? 7f : 0f), 1 - Mathf.Exp(-6 * Time.deltaTime));
+        var pivot = smoothPos + Quaternion.Euler(0, yaw, 0) * (shoulder + bob);
         var want = pivot - rot * Vector3.forward * distance;
         // keep the camera out of walls
         if (Physics.SphereCast(pivot, 0.2f, want - pivot, out var hit, distance, collideWith, QueryTriggerInteraction.Ignore)

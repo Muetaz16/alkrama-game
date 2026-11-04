@@ -74,8 +74,10 @@ public class WeaponController : MonoBehaviour
         switchTo = -1;
 
         Aiming = aimHeld && !player.sprint;
-        var targetFov = Aiming ? W.aimFov : defaultFov;
-        cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, targetFov, 1 - Mathf.Exp(-14 * Time.deltaTime));
+        if (Aiming || fireHeld) player.combatUntil = Time.time + 1.2f;   // turn to face the crosshair
+        camRig.baseFov = defaultFov;
+        camRig.aimingFov = Aiming || Mathf.Abs(cam.fieldOfView - defaultFov) > 8f && !player.Sprinting;
+        if (camRig.aimingFov) cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, Aiming ? W.aimFov : defaultFov, 1 - Mathf.Exp(-14 * Time.deltaTime));
         camRig.distance = Mathf.Lerp(camRig.distance, Aiming ? (W.scope ? 0.6f : 1.9f) : baseDistance, 1 - Mathf.Exp(-12 * Time.deltaTime));
 
         if (reloadPressed && !reloading && W.mag < W.magSize && W.reserve > 0) { reloading = true; reloadEnd = Time.time + W.reloadTime; }
@@ -86,7 +88,7 @@ public class WeaponController : MonoBehaviour
             W.mag += take; W.reserve -= take; reloading = false;
         }
 
-        if (fireHeld && !reloading && Time.time >= nextShot && !player.sprint)
+        if (fireHeld && !reloading && Time.time >= nextShot && !player.Sprinting && Vector3.Angle(transform.forward, Quaternion.Euler(0, camRig.yaw, 0) * Vector3.forward) < 35f)
         {
             if (W.mag <= 0) { audioSrc.PlayOneShot(clickClip, 0.5f); nextShot = Time.time + 0.3f; if (W.reserve > 0) { reloading = true; reloadEnd = Time.time + W.reloadTime; } }
             else { Fire(); nextShot = Time.time + 60f / W.rpm; }
