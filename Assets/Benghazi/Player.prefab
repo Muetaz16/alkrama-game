@@ -521,17 +521,21 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6f7df93343b46fc428f39a1732dd642f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerController
-  acceleration: 14
+  accel: 11
+  decel: 14
+  airControl: 1.5
   jumpHeight: 1.1
   gravity: -22
-  turnSpeed: 720
+  turnSpeed: 900
   yaw: 0
   moveInput: {x: 0, y: 0}
   sprint: 0
   walk: 0
   crouch: 0
   jumpPressed: 0
+  aiming: 0
   externalInput: 0
+  combatUntil: 0
 --- !u!1 &5133595873565622045
 GameObject:
   m_ObjectHideFlags: 0

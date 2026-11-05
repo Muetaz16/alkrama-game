@@ -91,6 +91,7 @@ public static class SoldierSetup
         ac.AddParameter("Grounded", AnimatorControllerParameterType.Bool);
         ac.AddParameter("Crouch", AnimatorControllerParameterType.Bool);
         ac.AddParameter("Jump", AnimatorControllerParameterType.Trigger);
+        ac.AddParameter(new AnimatorControllerParameter { name = "AnimSpeed", type = AnimatorControllerParameterType.Float, defaultFloat = 1f });
         ac.parameters.First(p => p.name == "Grounded").defaultBool = true;
         var sm = ac.layers[0].stateMachine;
 
@@ -102,6 +103,7 @@ public static class SoldierSetup
         foreach (var (s, d) in Dirs) tree.AddChild(Clip("walk " + s), d * PlayerController.WalkSpeed);
         foreach (var (s, d) in Dirs) tree.AddChild(Clip("run " + s), d * PlayerController.RunSpeed);
         foreach (var (s, d) in Dirs.Take(3)) tree.AddChild(Clip("sprint " + s), d * PlayerController.SprintSpeed);
+        loco.speedParameterActive = true; loco.speedParameter = "AnimSpeed";   // faster than the clip at full/tactical sprint
 
         var crouch = ac.CreateBlendTreeInController("Crouch", out var ctree, 0);
         ctree.blendType = BlendTreeType.FreeformDirectional2D;

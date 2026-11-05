@@ -104,6 +104,39 @@ public class AutoTest : MonoBehaviour
         log.Flush();
     }
 
+    // walk-up views of the landmarks, taken in the real game for presenting the prototype
+    IEnumerator Showcase()
+    {
+        var palace = GameObject.Find("palace");
+        if (!palace) yield break;
+        var b = new Bounds(palace.transform.position, Vector3.zero);
+        foreach (var r in palace.GetComponentsInChildren<Renderer>()) b.Encapsulate(r.bounds);
+        var cc = player.GetComponent<CharacterController>();
+        void Teleport(Vector3 p) { cc.enabled = false; player.transform.position = p; cc.enabled = true; }
+        var front = palace.transform.forward; var side = palace.transform.right;
+        Teleport(new Vector3(b.center.x, 0.2f, b.center.z) + front * 24f + side * 10f);
+        player.moveInput = Vector2.zero;
+        yield return new WaitForSeconds(0.3f);
+        LookAt(b.center + Vector3.up * 1.5f - side * 4f);
+        yield return new WaitForSeconds(0.6f);
+        yield return Shot("showcase_palace.png");
+        Teleport(new Vector3(b.center.x, 0.2f, b.center.z) + front * 6.5f - side * 14f);
+        yield return new WaitForSeconds(0.3f);
+        LookAt(b.center + front * 6.5f + side * 6f + Vector3.up * 1.4f);
+        yield return new WaitForSeconds(0.6f);
+        yield return Shot("showcase_arcade.png");
+        // the roundabout and the lighthouse from the Corniche side
+        var rb = GameObject.Find("roundabout");
+        if (rb)
+        {
+            Teleport(rb.transform.position + (rb.transform.position - b.center).normalized * -6f + Vector3.Cross(Vector3.up, (rb.transform.position - b.center).normalized) * 26f + Vector3.up * 0.2f);
+            yield return new WaitForSeconds(0.3f);
+            LookAt(rb.transform.position + Vector3.up * 3f);
+            yield return new WaitForSeconds(0.6f);
+            yield return Shot("showcase_roundabout.png");
+        }
+    }
+
     IEnumerator Run()
     {
         yield return new WaitForSeconds(1.5f);
@@ -126,6 +159,7 @@ public class AutoTest : MonoBehaviour
         yield return Step("jump", Vector2.up, 0.35f);
         yield return Shot("play_jump.png");
         yield return Step("land", Vector2.zero, 1f);
+        yield return Showcase();
         log.WriteLine("done"); log.Close();
         Application.Quit();
     }

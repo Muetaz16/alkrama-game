@@ -338,7 +338,7 @@ public static class LookUpgrade
                 else if (!tex && size.x > 1000 && Near(c, 0.33f, 0.32f, 0.29f)) { dst = Lit("Asphalt", "asphalt_02", new Color(0.82f, 0.8f, 0.78f), 0.18f, 1f); PlanarUV(r, 0.18f); }
                 else if ((tex && tex.width == 64 && tex.height == 64 && size.y > 0.5f && size.y < 3f && Mathf.Max(size.x, size.z) > 100) || (!tex && size.x > 100 && size.z > 200 && Near(c, 0.89f, 0.87f, 0.82f))) { dst = Lit("SeaWall", "plastered_wall_02", new Color(1.04f, 1.03f, 1.0f), 0.25f, 0.5f); PlanarUV(r, 0.25f); }
                 else if (tex && tex.width == 256 && tex.height == 256 && size.y < 0.5f && size.x > 50) { dst = Lit("Promenade", "large_grey_tiles", new Color(1.35f, 1.32f, 1.25f), 0.22f, 0.8f); PlanarUV(r, 0.22f); }
-                else if (tex && size.y > 2f && (tex.width == 128 || tex.width == 512 || (tex.width == 64 && tex.height == 64)) && !path.Contains("palm")) dst = Facade(src);   // walls: houses, mosques, ruins
+                else if (tex && size.y > 2f && (tex.width == 128 || tex.width == 512 || tex.width == 1024 || (tex.width == 64 && tex.height == 64)) && !path.Contains("palm")) dst = Facade(src);   // walls: houses, mosques, ruins
                 else if (false && tn == "image_27") dst = Frond("FrondGreen", "FrondGreen", Color.white);
                 else if (false && tn == "image_28") dst = Frond("FrondDry", "FrondDry", Color.white);
                 else if (false && tn == "image_29") dst = Frond("FrondBurnt", "FrondBurnt", Color.white);

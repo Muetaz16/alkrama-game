@@ -16,7 +16,7 @@ public class ThirdPersonCamera : MonoBehaviour
     [HideInInspector] public float yaw;
     [HideInInspector] public bool aimingFov;      // the weapon owns the field of view while aiming
     [HideInInspector] public float baseFov = 65f;
-    Vector3 smoothPos, smoothVel; float bobPhase;
+    float sprintFov, roll, startLean;
 
     void Start()
     {
@@ -42,15 +42,20 @@ public class ThirdPersonCamera : MonoBehaviour
         pitch = Mathf.Clamp(pitch - d.y, minPitch, maxPitch);
         target.yaw = yaw;
 
-        var rot = Quaternion.Euler(pitch, yaw, 0);
-        // the camera trails the body a touch (weight), bobs with the stride and widens when sprinting
-        smoothPos = Vector3.SmoothDamp(smoothPos == Vector3.zero ? target.transform.position : smoothPos, target.transform.position, ref smoothVel, 0.06f);
-        float sp = target.Speed;
-        bobPhase += Time.deltaTime * Mathf.Lerp(0f, 11f, sp / PlayerController.SprintSpeed) * (sp > 0.5f ? 1 : 0);
-        var bob = new Vector3(Mathf.Sin(bobPhase) * 0.03f, Mathf.Abs(Mathf.Cos(bobPhase)) * 0.05f, 0) * Mathf.InverseLerp(0.5f, PlayerController.SprintSpeed, sp);
+        // same camera feel as the web game: head bob synced to the steps, sprint widens the view
+        // (+8, tactical +14), a little roll into strafes, a lean on start/stop and a dip on landing
+        float dt = Time.deltaTime;
+        float sp = target.Speed, runK = Mathf.Clamp01(sp / PlayerController.SprintMove);
+        float bobK = Mathf.Clamp01(sp / PlayerController.JogSpeed) * (aimingFov ? 0.15f : 1f);
+        float ph = target.StepPhase * 2f;                                  // two steps per locomotion cycle
+        var bob = new Vector3(Mathf.Sin(ph) * (0.025f + 0.02f * runK), -Mathf.Abs(Mathf.Sin(ph)) * (0.03f + 0.05f * runK), 0) * bobK;
+        sprintFov = Mathf.Lerp(sprintFov, target.Sprinting ? (target.Tactical ? 14f : 8f) : 0f, 1 - Mathf.Exp(-6 * dt));
         var cam = GetComponent<Camera>();
-        if (cam && !aimingFov) cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, baseFov + (target.Sprinting ? 7f : 0f), 1 - Mathf.Exp(-6 * Time.deltaTime));
-        var pivot = smoothPos + Quaternion.Euler(0, yaw, 0) * (shoulder + bob);
+        if (cam && !aimingFov) cam.fieldOfView = baseFov + sprintFov;
+        roll = Mathf.Lerp(roll, -target.Strafe * 2.2f, 1 - Mathf.Exp(-6 * dt));
+        startLean = Mathf.Lerp(startLean, Mathf.Clamp(target.AccelForward * 0.12f, -2.5f, 2.5f), 1 - Mathf.Exp(-8 * dt));
+        var rot = Quaternion.Euler(pitch + startLean, yaw, roll);
+        var pivot = target.transform.position + Vector3.up * target.LandDip + Quaternion.Euler(0, yaw, 0) * (shoulder + bob);
         var want = pivot - rot * Vector3.forward * distance;
         // keep the camera out of walls
         if (Physics.SphereCast(pivot, 0.2f, want - pivot, out var hit, distance, collideWith, QueryTriggerInteraction.Ignore)

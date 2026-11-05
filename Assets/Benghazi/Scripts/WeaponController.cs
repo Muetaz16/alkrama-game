@@ -38,6 +38,21 @@ public class WeaponController : MonoBehaviour
     ParticleSystem dust;
     readonly Queue<GameObject> holes = new();
     Material holeMat;
+    float aimT;
+
+    // like the web game: the gun lives in the right hand; its hold is measured once from the
+    // "idle aiming" pose (pointing straight ahead, grip in the palm), so every animation carries it
+    void CalibrateHold(Transform gun)
+    {
+        anim.SetFloat("VelX", 0); anim.SetFloat("VelZ", 0); anim.SetBool("Crouch", false);
+        anim.Play("Locomotion", 0, 0f);
+        anim.Update(0f);
+        var mid = anim.GetBoneTransform(HumanBodyBones.RightMiddleProximal);
+        var palm = mid ? Vector3.Lerp(rightHand.position, mid.position, 0.6f) : rightHand.position;
+        var rot = Quaternion.LookRotation(transform.forward, Vector3.up);
+        gun.SetPositionAndRotation(palm - rot * new Vector3(0, -0.04f, 0), rot);   // grip block sits 4 cm under the gun origin
+        gun.SetParent(rightHand, true);
+    }
 
     void Start()
     {
@@ -51,7 +66,7 @@ public class WeaponController : MonoBehaviour
         foreach (var w in weapons) w.mag = w.magSize;
 
         rifle = transform.GetComponentsInChildren<Transform>(true).FirstOrDefaultByName("Rifle");
-        if (rifle) { rifle.SetParent(transform, true); sniper = BuildSniper(rifle); }
+        if (rifle && rightHand) { CalibrateHold(rifle); sniper = BuildSniper(rifle); }
 
         audioSrc = gameObject.AddComponent<AudioSource>(); audioSrc.spatialBlend = 0; audioSrc.volume = 0.8f;
         rifleClip = Gunshot(0.32f, 900f, 1); sniperClip = Gunshot(0.9f, 420f, 2); clickClip = Gunshot(0.03f, 3000f, 3);
@@ -73,11 +88,13 @@ public class WeaponController : MonoBehaviour
         if (switchTo >= 0 && switchTo != current && switchTo < weapons.Length) { current = switchTo; reloading = false; ShowWeapon(); }
         switchTo = -1;
 
-        Aiming = aimHeld && !player.sprint;
-        if (Aiming || fireHeld) player.combatUntil = Time.time + 1.2f;   // turn to face the crosshair
+        Aiming = aimHeld && !player.Sprinting;
+        player.aiming = Aiming;
+        // zoom in/out smoothly; while it runs the weapon owns the field of view
+        aimT = Mathf.MoveTowards(aimT, Aiming ? 1f : 0f, Time.deltaTime / 0.18f);
         camRig.baseFov = defaultFov;
-        camRig.aimingFov = Aiming || Mathf.Abs(cam.fieldOfView - defaultFov) > 8f && !player.Sprinting;
-        if (camRig.aimingFov) cam.fieldOfView = Mathf.Lerp(cam.fieldOfView, Aiming ? W.aimFov : defaultFov, 1 - Mathf.Exp(-14 * Time.deltaTime));
+        camRig.aimingFov = aimT > 0.001f;
+        if (camRig.aimingFov) cam.fieldOfView = Mathf.Lerp(defaultFov, W.aimFov, Mathf.SmoothStep(0, 1, aimT));
         camRig.distance = Mathf.Lerp(camRig.distance, Aiming ? (W.scope ? 0.6f : 1.9f) : baseDistance, 1 - Mathf.Exp(-12 * Time.deltaTime));
 
         if (reloadPressed && !reloading && W.mag < W.magSize && W.reserve > 0) { reloading = true; reloadEnd = Time.time + W.reloadTime; }
@@ -88,7 +105,7 @@ public class WeaponController : MonoBehaviour
             W.mag += take; W.reserve -= take; reloading = false;
         }
 
-        if (fireHeld && !reloading && Time.time >= nextShot && !player.Sprinting && Vector3.Angle(transform.forward, Quaternion.Euler(0, camRig.yaw, 0) * Vector3.forward) < 35f)
+        if (fireHeld && !reloading && Time.time >= nextShot && !player.Sprinting && player.SprintLock <= 0)
         {
             if (W.mag <= 0) { audioSrc.PlayOneShot(clickClip, 0.5f); nextShot = Time.time + 0.3f; if (W.reserve > 0) { reloading = true; reloadEnd = Time.time + W.reloadTime; } }
             else { Fire(); nextShot = Time.time + 60f / W.rpm; }
@@ -205,11 +222,7 @@ public class WeaponController : MonoBehaviour
             float pitch = camRig.pitch;
             chest.rotation = Quaternion.AngleAxis(pitch * 0.55f, transform.right) * chest.rotation;
         }
-        var gun = W.scope && sniper ? sniper : rifle;
-        if (!gun || !rightHand) return;
-        var aim = AimPoint(out _);
-        var fwd = (aim - rightHand.position).normalized;
-        gun.SetPositionAndRotation(rightHand.position + fwd * 0.12f - Vector3.up * 0.03f, Quaternion.LookRotation(fwd, Vector3.up));
+
     }
 
     void ShowWeapon()
@@ -220,7 +233,8 @@ public class WeaponController : MonoBehaviour
 
     Transform BuildSniper(Transform ak)
     {
-        var s = Instantiate(ak.gameObject, transform).transform; s.name = "Sniper";
+        var s = Instantiate(ak.gameObject, ak.parent).transform; s.name = "Sniper";
+        s.SetLocalPositionAndRotation(ak.localPosition, ak.localRotation); s.localScale = ak.localScale;
         foreach (Transform p in s)
         {
             if (p.name == "Barrel") { p.localScale = new Vector3(0.022f, 0.022f, 0.75f); p.localPosition = new Vector3(0, 0.07f, 0.66f); }

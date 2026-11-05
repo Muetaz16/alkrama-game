@@ -1,98 +1,115 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-// Third-person shooter movement, same feel as the web prototype:
-// WASD / left stick move relative to the camera, the soldier always faces where the camera looks,
-// Shift = sprint (forward), Ctrl/Alt = walk, C = crouch, Space = jump.
-// Speeds match the mocap clips (m/s) so the feet don't slide; the animator blends by local velocity.
+// Third-person shooter movement, tuned to feel like the web prototype (main.js):
+// the soldier always faces where the camera looks (strafe / backpedal with the 8-way mocap),
+// jog 4.2 m/s, Shift = sprint 7.5 (forward only), double-tap Shift = tactical sprint 9.5,
+// aiming 2.4, crouch 2.3. Momentum eases toward the wanted speed (accel 11, decel 14).
+// Above the sprint clip's own speed the animator plays faster so the feet stay planted.
 [RequireComponent(typeof(CharacterController))]
 public class PlayerController : MonoBehaviour
 {
+    // clip speeds (m/s) the blend tree is laid out with
     public const float WalkSpeed = 1.92f, RunSpeed = 4.8f, SprintSpeed = 7.2f, CrouchSpeed = 2.04f;
-    public float acceleration = 14f, jumpHeight = 1.1f, gravity = -22f, turnSpeed = 720f;
+    // movement speeds (from the web game)
+    public const float JogSpeed = 4.2f, SprintMove = 7.5f, TacticalMove = 9.5f, AimMove = 2.4f, CrouchMove = 2.3f, CrouchAimMove = 1.6f;
+    public float accel = 11f, decel = 14f, airControl = 1.5f, jumpHeight = 1.1f, gravity = -22f, turnSpeed = 900f;
 
     [HideInInspector] public float yaw;          // look direction, set by the camera
     [HideInInspector] public Vector2 moveInput;  // -1..1, from keyboard/stick (or AutoTest)
-    [HideInInspector] public bool sprint, walk, crouch, jumpPressed;
+    [HideInInspector] public bool sprint, walk, crouch, jumpPressed, aiming;
     public bool externalInput;                   // AutoTest / touch controls drive the inputs
-    [HideInInspector] public float combatUntil;  // the weapon keeps the body facing the crosshair until then
-    public bool combat { get; private set; }
+    [HideInInspector] public float combatUntil;  // kept for the weapon (sprint-to-fire)
+
     public float Speed { get; private set; }
     public bool Sprinting { get; private set; }
-    Transform model; float lean;
+    public bool Tactical { get; private set; }
+    public float SprintLock { get; private set; }  // seconds until the gun is up after a sprint
+    public float AccelForward { get; private set; }// for the start/stop camera lean
+    public float Strafe { get; private set; }      // -1..1 sideways speed, for the camera roll
+    public float LandDip { get; private set; }     // camera dip after a landing
+    public float StepPhase { get; private set; }   // radians, two steps per locomotion cycle
 
     CharacterController cc;
     Animator anim;
     Vector3 velocity;        // horizontal, world space
-    float vy;
-    bool wasGrounded = true;
+    float vy, prevFwd, tacT, lastTap = -1, landVel;
+    bool sprintHeldBefore, wasGrounded = true;
     static readonly int VelX = Animator.StringToHash("VelX"), VelZ = Animator.StringToHash("VelZ"),
-        Grounded = Animator.StringToHash("Grounded"), Crouch = Animator.StringToHash("Crouch"), Jump = Animator.StringToHash("Jump");
+        Grounded = Animator.StringToHash("Grounded"), Crouch = Animator.StringToHash("Crouch"), Jump = Animator.StringToHash("Jump"),
+        AnimSpeed = Animator.StringToHash("AnimSpeed");
 
     void Awake()
     {
         cc = GetComponent<CharacterController>();
+        cc.minMoveDistance = 0f;   // at high frame rates each step is under a millimetre; never drop it
         anim = GetComponentInChildren<Animator>();
-        model = anim ? anim.transform : null;
         yaw = transform.eulerAngles.y;
     }
 
     void Update()
     {
         if (!externalInput) ReadInput();
-        float dt = Time.deltaTime;
-
-        // two ways of moving, like modern shooters:
-        //  combat (aiming / just fired / crouched): body faces the crosshair, strafes and backpedals
-        //  free-run: body turns to face where it runs, so it always uses the forward run/sprint cycles
-        combat = combatUntil > Time.time || crouch;
-        float speed = crouch ? CrouchSpeed : walk ? WalkSpeed : RunSpeed;
+        float dt = Mathf.Max(Time.deltaTime, 1e-4f);
         var input = Vector2.ClampMagnitude(moveInput, 1f);
-        bool sprinting = sprint && !crouch && (combat ? input.y > 0.5f : input.magnitude > 0.5f);
-        if (sprinting) { speed = SprintSpeed; combatUntil = 0; combat = crouch; }
 
-        var look = Quaternion.Euler(0, yaw, 0);
-        var wish = look * new Vector3(input.x, 0, input.y) * speed;
-        // quick to start, a little slower to stop and to change direction at speed (weight)
-        float rate = wish.sqrMagnitude > velocity.sqrMagnitude ? 2.2f : 3.2f;
-        if (Vector3.Dot(wish, velocity) < 0) rate = 4.5f;
-        velocity = Vector3.MoveTowards(velocity, wish, rate * Mathf.Max(speed, RunSpeed) * dt);
-        Speed = velocity.magnitude; Sprinting = sprinting && Speed > RunSpeed + 0.5f;
+        // sprint: forward only, not while aiming; it stands you up from a crouch
+        if (sprint && input.y > 0.3f && crouch && !aiming) crouch = false;
+        bool sprinting = sprint && !aiming && input.y > 0.3f && !crouch;
+        // tactical sprint: double-tap Shift while sprinting
+        if (sprint && !sprintHeldBefore) { if (Time.time - lastTap < 0.3f && sprinting) tacT = 6f; lastTap = Time.time; }
+        sprintHeldBefore = sprint;
+        if (!sprinting) tacT = 0; else tacT -= dt;
+        bool tactical = tacT > 0;
+        SprintLock = sprinting && Speed > 1 ? 0.22f : Mathf.Max(0, SprintLock - dt);
+        if (sprinting) combatUntil = 0;
+
+        float top = crouch ? (aiming ? CrouchAimMove : CrouchMove) : aiming ? AimMove : tactical ? TacticalMove : sprinting ? SprintMove : walk ? WalkSpeed : JogSpeed;
+        var wish = Quaternion.Euler(0, yaw, 0) * new Vector3(input.x, 0, input.y);
+        if (wish.sqrMagnitude > 1e-4f) wish = wish.normalized * top * input.magnitude;
+        float rate = !cc.isGrounded ? airControl : input.sqrMagnitude > 1e-4f ? accel : decel;
+        velocity = Vector3.Lerp(velocity, wish, 1 - Mathf.Exp(-rate * dt));
 
         // gravity and jumping
         if (cc.isGrounded && vy < 0) vy = -2f;
-        if (jumpPressed && cc.isGrounded && !crouch)
-        {
-            vy = Mathf.Sqrt(2f * -gravity * jumpHeight);
-            anim?.SetTrigger(Jump);
-        }
+        if (jumpPressed && cc.isGrounded && !crouch) { vy = Mathf.Sqrt(2f * -gravity * jumpHeight); anim?.SetTrigger(Jump); }
         jumpPressed = false;
         vy += gravity * dt;
+        var before = transform.position;
         cc.Move((velocity + Vector3.up * vy) * dt);
+        // keep only the speed we really got (slide along walls, no stored momentum)
+        var moved = (transform.position - before) / dt; moved.y = 0;
+        if (moved.magnitude < velocity.magnitude * 0.7f) velocity = Vector3.Lerp(velocity, moved, 0.5f);   // ran into a wall
 
-        // facing: crosshair in combat, run direction otherwise (stand still = keep facing)
-        float before = transform.eulerAngles.y;
-        if (combat) transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.Euler(0, yaw, 0), turnSpeed * dt);
-        else if (velocity.sqrMagnitude > 0.3f)
-        {
-            var target = Quaternion.LookRotation(new Vector3(velocity.x, 0, velocity.z));
-            float turnRate = Mathf.Lerp(720f, 380f, Mathf.InverseLerp(RunSpeed, SprintSpeed, Speed));   // wider turns at sprint
-            transform.rotation = Quaternion.RotateTowards(transform.rotation, target, turnRate * dt);
-        }
-        // lean into turns
-        float turn = Mathf.DeltaAngle(before, transform.eulerAngles.y) / Mathf.Max(dt, 1e-4f);
-        lean = Mathf.Lerp(lean, Mathf.Clamp(-turn * 0.03f * Mathf.InverseLerp(1f, SprintSpeed, Speed), -12f, 12f), 1 - Mathf.Exp(-8 * dt));
-        if (model) model.localRotation = Quaternion.Euler(0, 0, lean);
+        // landing: dip the camera by how hard we hit the ground
+        if (cc.isGrounded && !wasGrounded && landVel < -3f) LandDip = Mathf.Max(-0.35f, landVel * 0.025f);
+        LandDip = Mathf.Lerp(LandDip, 0, 1 - Mathf.Exp(-7 * dt));
+        landVel = cc.velocity.y;
+        wasGrounded = cc.isGrounded;
+
+        // always face the camera direction (the 8-way mocap does the strafing / backpedal)
+        transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.Euler(0, yaw, 0), turnSpeed * dt);
+
+        Speed = new Vector2(velocity.x, velocity.z).magnitude;
+        Sprinting = sprinting && Speed > JogSpeed + 0.5f;
+        Tactical = tactical && Sprinting;
+        var local = transform.InverseTransformDirection(velocity);
+        AccelForward = Mathf.Lerp(AccelForward, (local.z - prevFwd) / dt, 1 - Mathf.Exp(-12 * dt));
+        prevFwd = local.z;
+        Strafe = local.x / SprintMove;
 
         if (anim)
         {
-            var local = transform.InverseTransformDirection(velocity);
-            anim.SetFloat(VelX, local.x, 0.12f, dt);
-            anim.SetFloat(VelZ, local.z, 0.12f, dt);
+            // the blend tree tops out at the sprint clip's speed; beyond that play it faster
+            float clipZ = Mathf.Min(local.z, SprintSpeed);
+            anim.SetFloat(VelX, local.x, 0.08f, dt);
+            anim.SetFloat(VelZ, clipZ, 0.08f, dt);
+            anim.SetFloat(AnimSpeed, local.z > SprintSpeed ? local.z / SprintSpeed : 1f);
             anim.SetBool(Grounded, cc.isGrounded);
             anim.SetBool(Crouch, crouch);
+            var st = anim.GetCurrentAnimatorStateInfo(0);
+            StepPhase = (st.normalizedTime % 1f) * Mathf.PI * 2f;
         }
-        wasGrounded = cc.isGrounded;
     }
 
     void ReadInput()
