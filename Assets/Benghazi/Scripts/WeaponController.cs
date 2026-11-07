@@ -45,7 +45,7 @@ public class WeaponController : MonoBehaviour
     ParticleSystem dust;
     readonly Queue<GameObject> holes = new();
     readonly Queue<Rigidbody> shells = new();
-    Material holeMat; Texture2D scopeTex;
+    Material holeMat; Texture2D scopeTex, dotTex;
     float aimT, breath;
 
     // the gun lives in the right hand (third person); its hold is measured once from the "idle aiming"
@@ -103,7 +103,7 @@ public class WeaponController : MonoBehaviour
         flash.type = LightType.Point; flash.color = new Color(1f, 0.75f, 0.4f); flash.range = 6; flash.intensity = 0;
         dust = BuildDust();
         holeMat = new Material(Shader.Find("Universal Render Pipeline/Lit")); holeMat.SetColor("_BaseColor", new Color(0.05f, 0.045f, 0.04f)); holeMat.SetFloat("_Smoothness", 0);
-        scopeTex = ScopeTexture(1024);
+        scopeTex = ScopeTexture(1024); dotTex = DotTexture(32);
         SetView(camRig.firstPerson);
         ShowWeapon();
     }
@@ -452,6 +452,13 @@ public class WeaponController : MonoBehaviour
         t.SetPixels(px); t.Apply(); return t;
     }
 
+    static Texture2D DotTexture(int n)
+    {
+        var t = new Texture2D(n, n, TextureFormat.RGBA32, false);
+        for (int y = 0; y < n; y++) for (int x = 0; x < n; x++) { float d = new Vector2(x - n / 2f + 0.5f, y - n / 2f + 0.5f).magnitude / (n / 2f); t.SetPixel(x, y, new Color(1, 1, 1, Mathf.Clamp01((1 - d) * 3))); }
+        t.Apply(); return t;
+    }
+
     void OnGUI()
     {
         float w = Screen.width, h = Screen.height, cx = w / 2, cy = h / 2;
@@ -474,6 +481,13 @@ public class WeaponController : MonoBehaviour
                 GUI.DrawTexture(new Rect(cx - 2, cy + i * inner / 5 - 2, 4, 4), white);
             }
             GUI.color = new Color(1, 0.2f, 0.15f, 0.9f); GUI.DrawTexture(new Rect(cx - 1.5f, cy - 1.5f, 3, 3), white);
+            GUI.color = Color.black; GUI.DrawTexture(new Rect(0, 0, w, cy - r + 2), white); GUI.DrawTexture(new Rect(0, cy + r - 2, w, h - cy - r + 2), white);
+        }
+        else if (Aiming && !W.melee && camRig.firstPerson && aimT > 0.85f)
+        {
+            // the red dot, projected at infinity in the middle of the sight
+            GUI.color = new Color(1f, 0.15f, 0.1f, 0.35f); GUI.DrawTexture(new Rect(cx - 4, cy - 4, 8, 8), dotTex);
+            GUI.color = new Color(1f, 0.25f, 0.18f, 1f); GUI.DrawTexture(new Rect(cx - 2.5f, cy - 2.5f, 5, 5), dotTex);
         }
         else if (!(Aiming && !W.melee && camRig.firstPerson))
         {

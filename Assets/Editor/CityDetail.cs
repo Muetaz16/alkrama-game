@@ -45,6 +45,7 @@ public static class CityDetail
         batches.Clear(); matCache.Clear(); counts = 0;
         var old = GameObject.Find("City Detail"); if (old) Object.DestroyImmediate(old);
         Physics.SyncTransforms();
+        bool back = Physics.queriesHitBackfaces; Physics.queriesHitBackfaces = true;   // the exported road surface faces down
         Load();
         Textures();
         var p = GameObject.Find("Player"); player = p ? p.transform.position : new Vector3(9999, 0, 9999);
@@ -56,6 +57,7 @@ public static class CityDetail
         Checkpoint();
         Buildings();
 
+        Physics.queriesHitBackfaces = back;
         var root = new GameObject("City Detail");
         Flush(root);
         Physics.SyncTransforms();

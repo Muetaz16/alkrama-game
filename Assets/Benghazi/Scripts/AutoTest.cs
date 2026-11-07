@@ -69,12 +69,12 @@ public class AutoTest : MonoBehaviour
         // rifle: aim at a near target, short burst
         var near = targets[Mathf.Min(1, targets.Length - 1)];
         log.WriteLine("target distances: " + string.Join(", ", System.Array.ConvertAll(targets, x => Vector3.Distance(x.transform.position, player.transform.position).ToString("F0"))));
-        LookAt(near.transform.position + Vector3.up * 0.55f);
+        LookAt(near.transform.position + Vector3.up * 0.95f);
         yield return new WaitForSeconds(0.3f);
         yield return Shot("fp_rifle_hip.png");
         gun.aimHeld = true;
         yield return new WaitForSeconds(0.6f);
-        LookAt(near.transform.position + Vector3.up * 0.55f);
+        LookAt(near.transform.position + Vector3.up * 0.95f);
         yield return null;
         yield return Shot("fp_rifle_ads.png");
         int before = gun.hits;
@@ -180,9 +180,9 @@ public class AutoTest : MonoBehaviour
             var away = Vector3.ProjectOnPlane(player.transform.position - lh, Vector3.up).normalized;
             for (int tries = 0; tries < 8; tries++)
             {
-                var spot = lh + Quaternion.Euler(0, tries * 45f, 0) * away * 40f;
+                var spot = lh + Quaternion.Euler(0, tries * 45f, 0) * away * 32f;
                 if (Physics.Raycast(spot + Vector3.up * 60, Vector3.down, out var hit, 80f) && hit.point.y < 1f && hit.point.y > -0.1f
-                    && !Physics.Linecast(hit.point + Vector3.up * 1.6f, lh + Vector3.up * 12f))
+                    && (!Physics.Linecast(hit.point + Vector3.up * 1.6f, lh + Vector3.up * 12f, out var block) || Vector2.Distance(new Vector2(block.point.x, block.point.z), new Vector2(lh.x, lh.z)) < 9f))
                 { Teleport(hit.point + Vector3.up * 0.1f); break; }
             }
             yield return new WaitForSeconds(0.3f);

@@ -294,7 +294,7 @@ public static class GunFactory
         {
             Box(g, steel, new Vector3(0, 0.087f, 0.045f), new Vector3(0.022f, 0.012f, 0.1f), default, "dot mount");
             for (int i = 0; i < 6; i++) Box(g, black, new Vector3(0, 0.0935f, 0.004f + i * 0.016f), new Vector3(0.024f, 0.002f, 0.006f), default, "rail slot");
-            Cone(g, polymer, 0.122f, 0.012f, 0.082f, 0.0195f, 0.0205f, 0.0165f, "dot tube");
+            Cone(g, polymer, 0.122f, 0.012f, 0.082f, 0.0188f, 0.0196f, 0.0172f, "dot tube");
             Box(g, polymer, new Vector3(0, 0.1f, 0.047f), new Vector3(0.018f, 0.012f, 0.05f), default, "dot base");
             Tube(g, polymer, 0.022f, 0.122f, 0.04f, 0.056f, 0.006f, "dot knob");
             var d = Part(g, cube, dot, new Vector3(0, 0.122f, 0.081f), new Vector3(0.0045f, 0.0045f, 0.0001f), default, "dot");

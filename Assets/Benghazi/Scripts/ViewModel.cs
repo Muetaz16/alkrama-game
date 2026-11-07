@@ -20,9 +20,9 @@ public class ViewModel : MonoBehaviour
     Renderer[][] renderers = new Renderer[3][];
 
     // hip poses (camera space) and how far in front of the eye the sight sits when aiming
-    static readonly Vector3[] HipPos = { new(0.105f, -0.158f, 0.215f), new(0.11f, -0.165f, 0.2f), new(0.135f, -0.135f, 0.27f) };
-    static readonly Vector3[] HipRot = { new(1.5f, -2.5f, 0f), new(1.5f, -2f, 0f), new(-28f, -14f, -22f) };
-    static readonly float[] AdsDist = { 0.14f, 0.05f, 0f };
+    static readonly Vector3[] HipPos = { new(0.13f, -0.19f, 0.34f), new(0.14f, -0.195f, 0.33f), new(0.135f, -0.135f, 0.27f) };
+    static readonly Vector3[] HipRot = { new(1f, -1.5f, 2f), new(1f, -1.5f, 2f), new(-28f, -14f, -22f) };
+    static readonly float[] AdsDist = { 0.27f, 0.05f, 0f };
 
     public int Shown { get; private set; }
     public float aimT;                       // 0 hip .. 1 aiming, set by the weapon
@@ -219,7 +219,7 @@ public class ViewModel : MonoBehaviour
         rot += new Vector3(Mathf.Sin(ph * 2) * 0.9f, Mathf.Sin(ph) * 0.8f, Mathf.Sin(ph) * 1.8f) * bobK;
         // sprint: rifle swung across the chest, knife pumped low
         if (w == Knife) { pos += new Vector3(-0.01f, -0.03f, -0.02f) * sp; rot += new Vector3(22, 0, 8) * sp; }
-        else { pos += new Vector3(-0.045f, 0.0f, -0.035f) * sp; rot += new Vector3(14, -42, 26) * sp; rot += new Vector3(Mathf.Sin(ph * 2) * 3f, 0, Mathf.Sin(ph) * 4f) * sp; }
+        else { pos += new Vector3(-0.05f, 0.01f, -0.06f) * sp; rot += new Vector3(12, -38, 24) * sp; rot += new Vector3(Mathf.Sin(ph * 2) * 3f, 0, Mathf.Sin(ph) * 4f) * sp; }
 
         // strafe tilt, crouch cant, jump lift, landing dip
         rot.z += player.Strafe * 6f * free;
