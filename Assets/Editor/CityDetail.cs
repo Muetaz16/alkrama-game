@@ -42,7 +42,7 @@ public static class CityDetail
     public static void Build()
     {
         rnd = new System.Random(1911);
-        batches.Clear(); matCache.Clear(); counts = 0;
+        batches.Clear(); matCache.Clear(); counts = 0; carMarks.Clear();
         var old = GameObject.Find("City Detail"); if (old) Object.DestroyImmediate(old);
         Physics.SyncTransforms();
         bool back = Physics.queriesHitBackfaces; Physics.queriesHitBackfaces = true;   // the exported road surface faces down
@@ -60,6 +60,11 @@ public static class CityDetail
         Physics.queriesHitBackfaces = back;
         var root = new GameObject("City Detail");
         Flush(root);
+        foreach (var kv in carMarks)
+        {
+            var mk = new GameObject("CarMarker" + kv.Key).transform; mk.SetParent(root.transform, false);
+            mk.position = kv.Value.at; mk.rotation = Quaternion.LookRotation(kv.Value.kerb);
+        }
         Physics.SyncTransforms();
         Debug.Log($"[detail] placed {counts} parts in {root.transform.childCount} merged meshes");
     }
@@ -361,67 +366,183 @@ public static class CityDetail
         }
     }
 
-    // ---------- cars: parked and burnt-out ----------
-    static Mesh carBody, carGlass, jersey, dish;
+    // ---------- cars: the everyday Benghazi mix - small sedans, hatchbacks, SUVs, pickups - some shot up or burnt ----------
+    // Generic shapes of the cars you see there (Hyundai / Kia sedans, Toyota SUVs, Hilux-style pickups), no badges.
+    class CarType
+    {
+        public string name; public Mesh core, shell, glass, roof; public float W, wheelR, wheelF, wheelB, track, bPillar; public bool pickup;
+        public Vector2[] g; public float frontZ, backZ, bumperY;
+    }
+    static CarType[] carTypes;
+    static readonly Dictionary<int, (Vector3 at, Vector3 kerb)> carMarks = new();
+    static Mesh jersey, dish;
+
+    static CarType MakeType(string name, Vector2[] body, Vector2[] glass, float W, float wheelR, float wf, float wb, float track, float bPillar, bool pickup = false)
+    {
+        // rounded look: a full-width core, and a slightly smaller full-profile shell standing proud at the sides
+        var c = body.Aggregate(Vector2.zero, (s, v) => s + v) / body.Length;
+        var inner = body.Select(v => c + (v - c) * 0.965f).ToArray();
+        var t = new CarType { name = name, W = W, wheelR = wheelR, wheelF = wf, wheelB = wb, track = track, bPillar = bPillar, pickup = pickup, g = glass };
+        t.core = GunFactory.Extrude(body, W - 0.1f, 0.25f);
+        t.shell = GunFactory.Extrude(inner, W, 0.25f);
+        t.glass = GunFactory.Extrude(glass, W * 0.82f, 0.25f);
+        var g1 = glass[1]; var g2 = glass[2];
+        t.roof = GunFactory.Extrude(new[] { g1 + new Vector2(0.04f, -0.01f), g2 + new Vector2(-0.04f, -0.01f), g2 + new Vector2(-0.06f, 0.06f), g1 + new Vector2(0.06f, 0.06f) }, W * 0.86f, 0.25f);
+        t.frontZ = body.Max(v => v.x); t.backZ = body.Min(v => v.x); t.bumperY = body.Min(v => v.y) + 0.1f;
+        return t;
+    }
+
     static void Cars()
     {
-        carBody = GunFactory.Extrude(P(-2.2f, 0.28f, 2.2f, 0.28f, 2.27f, 0.55f, 2.12f, 0.82f, 0.95f, 0.93f, -1.5f, 0.95f, -2.2f, 0.9f, -2.27f, 0.6f), 1.74f, 0.25f);
-        carGlass = GunFactory.Extrude(P(0.92f, 0.93f, 0.2f, 1.42f, -1.15f, 1.42f, -1.62f, 0.95f), 1.6f, 0.25f);
-        var paints = new[] { new Color(0.82f, 0.82f, 0.8f), new Color(0.55f, 0.56f, 0.57f), new Color(0.12f, 0.2f, 0.36f), new Color(0.42f, 0.1f, 0.08f), new Color(0.75f, 0.68f, 0.52f), new Color(0.08f, 0.08f, 0.09f) }
-            .Select((c, i) => Mat("CarPaint" + i, c: c, smooth: 0.72f, metal: 0.3f)).ToArray();
-        var mGlass = Mat("CarGlass", c: new Color(0.05f, 0.07f, 0.08f), smooth: 0.93f, metal: 0.2f);
-        var mTyre = Mat("Tyre", c: new Color(0.05f, 0.05f, 0.05f), smooth: 0.15f);
-        var mRim = Mat("Rim", c: new Color(0.55f, 0.56f, 0.57f), smooth: 0.6f, metal: 0.9f);
-        var mRust = Mat("Rust", tex: "Rust", c: Color.white, smooth: 0.12f, metal: 0.4f);
-        var mBurnt = Mat("Burnt", tex: "NoiseGrey", c: new Color(0.07f, 0.065f, 0.06f), smooth: 0.08f);
-        var mLight = Mat("CarLight", c: new Color(0.9f, 0.9f, 0.85f), smooth: 0.9f);
-        var mTail = Mat("CarTail", c: new Color(0.55f, 0.05f, 0.04f), smooth: 0.8f);
-        int n = 0, burnt = 0;
+        Meshes();
+        carTypes = new[]
+        {
+            MakeType("sedan", P(2.25f, 0.33f, 2.3f, 0.5f, 2.27f, 0.68f, 2.1f, 0.8f, 1.0f, 0.96f, -1.55f, 1.0f, -2.15f, 0.98f, -2.27f, 0.82f, -2.3f, 0.5f, -2.25f, 0.33f),
+                     P(0.98f, 0.95f, 0.25f, 1.40f, -0.95f, 1.43f, -1.6f, 0.99f), 1.8f, 0.31f, 1.35f, -1.32f, 0.76f, -0.35f),
+            MakeType("hatch", P(1.95f, 0.33f, 2.0f, 0.5f, 1.97f, 0.7f, 1.8f, 0.82f, 0.85f, 0.97f, -1.8f, 1.05f, -1.98f, 0.95f, -2.0f, 0.5f, -1.95f, 0.33f),
+                     P(0.83f, 0.96f, 0.15f, 1.45f, -1.55f, 1.45f, -1.85f, 1.04f), 1.72f, 0.3f, 1.25f, -1.22f, 0.74f, -0.45f),
+            MakeType("suv", P(2.3f, 0.45f, 2.35f, 0.65f, 2.3f, 0.95f, 2.1f, 1.05f, 1.3f, 1.12f, -2.25f, 1.15f, -2.33f, 1.0f, -2.35f, 0.55f, -2.3f, 0.45f),
+                     P(1.28f, 1.11f, 0.75f, 1.72f, -2.05f, 1.76f, -2.25f, 1.15f), 1.88f, 0.37f, 1.45f, -1.4f, 0.8f, -0.4f),
+            MakeType("pickup", P(2.6f, 0.5f, 2.65f, 0.72f, 2.6f, 1.0f, 2.4f, 1.08f, 1.55f, 1.14f, -0.55f, 1.14f, -0.55f, 0.95f, -2.6f, 0.95f, -2.65f, 0.7f, -2.6f, 0.5f),
+                     P(1.5f, 1.13f, 0.95f, 1.72f, -0.45f, 1.74f, -0.55f, 1.14f), 1.82f, 0.38f, 1.6f, -1.45f, 0.78f, 99f, true),
+        };
+        // white and silver dominate the streets there
+        var paintCols = new[] { new Color(0.86f, 0.86f, 0.84f), new Color(0.86f, 0.86f, 0.84f), new Color(0.6f, 0.61f, 0.62f), new Color(0.6f, 0.61f, 0.62f), new Color(0.07f, 0.07f, 0.08f),
+                                new Color(0.42f, 0.08f, 0.07f), new Color(0.1f, 0.18f, 0.34f), new Color(0.72f, 0.66f, 0.52f), new Color(0.3f, 0.32f, 0.3f) };
+        var paints = paintCols.Select((c, i) => Mat("CarPaint" + i, c: c, smooth: 0.78f, metal: 0.35f)).ToArray();
+        var dirty = paintCols.Select((c, i) => Mat("CarPaintDirty" + i, tex: "NoiseGrey", c: c * 0.78f, smooth: 0.35f, metal: 0.2f)).ToArray();
+        var m = new CarMats
+        {
+            glass = Mat("CarGlass", c: new Color(0.05f, 0.07f, 0.08f), smooth: 0.95f, metal: 0.2f),
+            shattered = Mat("CarGlassShot", tex: "Shattered", c: Color.white, smooth: 0.6f),
+            tyre = Mat("Tyre", c: new Color(0.05f, 0.05f, 0.05f), smooth: 0.15f),
+            rim = Mat("Rim", c: new Color(0.62f, 0.63f, 0.64f), smooth: 0.7f, metal: 0.9f),
+            plastic = Mat("CarTrim", c: new Color(0.06f, 0.06f, 0.065f), smooth: 0.3f),
+            chrome = Mat("Chrome", c: new Color(0.75f, 0.76f, 0.78f), smooth: 0.9f, metal: 1f),
+            lamp = Mat("CarLight", c: new Color(0.9f, 0.9f, 0.86f), smooth: 0.95f, metal: 0.3f),
+            tail = Mat("CarTail", c: new Color(0.6f, 0.05f, 0.04f), smooth: 0.85f),
+            amber = Mat("CarAmber", c: new Color(0.9f, 0.5f, 0.08f), smooth: 0.85f),
+            plate = Mat("Plate", c: new Color(0.88f, 0.88f, 0.85f), smooth: 0.4f),
+            rust = Mat("Rust", tex: "Rust", c: Color.white, smooth: 0.12f, metal: 0.4f),
+            burnt = Mat("Burnt", tex: "NoiseGrey", c: new Color(0.07f, 0.065f, 0.06f), smooth: 0.08f),
+            hole = Mat("BulletHole", c: new Color(0.02f, 0.02f, 0.02f), smooth: 0.1f),
+            well = Mat("WheelWell", c: new Color(0.025f, 0.025f, 0.025f), smooth: 0.05f),
+        };
+        int n = 0, broken = 0, burnt = 0;
         foreach (var r in roads.Where(x => Walkable(x) && x.kind != "service"))
             for (int k = 0; k < r.pts.Count - 1; k++)
             {
                 var a = r.pts[k]; var b = r.pts[k + 1]; var d = b - a; d.y = 0; float L = d.magnitude; if (L < 6) continue;
                 var f = d / L; var nn = new Vector3(-f.z, 0, f.x);
-                for (float s = R(3, 12); s < L - 3; s += R(14, 30))
+                for (float s = R(3, 10); s < L - 3; s += R(11, 24))
                 {
-                    if (R() > 0.42f) continue;
+                    if (R() > 0.5f) continue;
+                    bool abandoned = R() < 0.25f;                        // left in the lane at an angle
                     float side = R() < 0.5f ? -1 : 1;
-                    var p = a + f * s + nn * side * (r.half - 1.15f);
-                    if (NearSpecial(p, 6) || StreetEdge(p, r, out _) < 2f || !OnRoad(p, out var y)) continue;
-                    if (!OnRoad(p + f * 2.2f, out _) || !OnRoad(p - f * 2.2f, out _)) continue;
-                    bool isBurnt = R() < 0.4f;
-                    var rot = Quaternion.LookRotation(f * (R() < 0.5f ? 1 : -1)) * Quaternion.Euler(0, R(-6, 6), 0);
-                    if (isBurnt) { rot *= Quaternion.Euler(R(-3, 3), R(-25, 25), R(-4, 4)); Car(new Vector3(p.x, y - 0.12f, p.z), rot, mBurnt, mRust, null, mRust, null, null, null, true); burnt++; }
-                    else Car(new Vector3(p.x, y, p.z), rot, paints[rnd.Next(paints.Length)], mGlass, mTyre, mRim, mLight, mTail, mGlass, false);
-                    n++;
+                    var p = a + f * s + nn * (abandoned ? R(-r.half + 1.6f, r.half - 1.6f) : side * (r.half - 1.15f));
+                    if (NearSpecial(p, 5) || StreetEdge(p, r, out _) < 2f || !OnRoad(p, out var y)) continue;
+                    if (!OnRoad(p + f * 2.4f, out _) || !OnRoad(p - f * 2.4f, out _)) continue;
+                    var type = carTypes[R() < 0.35f ? 0 : R() < 0.4f ? 1 : R() < 0.55f ? 3 : 2];
+                    float roll = R();
+                    int state = roll < 0.45f ? 0 : roll < 0.78f ? 1 : 2;      // 0 fine, 1 shot up / broken, 2 burnt out
+                    var rot = Quaternion.LookRotation(f * (R() < 0.5f ? 1 : -1)) * Quaternion.Euler(0, abandoned ? R(-40, 40) : R(-4, 4), 0);
+                    int pc = rnd.Next(paints.Length);
+                    BuildCar(type, new Vector3(p.x, y, p.z), rot, state == 1 ? dirty[pc] : paints[pc], state, m);
+                    if (!carMarks.ContainsKey(state) && !abandoned && Vector3.Distance(p, player) < 120) carMarks[state] = (new Vector3(p.x, y, p.z), nn * side);
+                    n++; if (state == 1) broken++; if (state == 2) burnt++;
                 }
             }
-        Debug.Log($"[detail] cars {n} ({burnt} burnt)");
+        Debug.Log($"[detail] cars {n} ({broken} broken, {burnt} burnt)");
     }
 
-    static void Car(Vector3 at, Quaternion rot, Material body, Material glass, Material tyre, Material rim, Material lightM, Material tail, Material roofM, bool burnt)
+    class CarMats { public Material glass, shattered, tyre, rim, plastic, chrome, lamp, tail, amber, plate, rust, burnt, hole, well; }
+
+    static void BuildCar(CarType t, Vector3 at, Quaternion rot, Material paint, int state, CarMats m)
     {
-        Add(carBody, Matrix4x4.TRS(at, rot, Vector3.one), body, true);
-        if (!burnt) Add(carGlass, Matrix4x4.TRS(at, rot, Vector3.one), glass, false);
-        else
+        bool burnt = state == 2, broken = state == 1;
+        var body = burnt ? (R() < 0.5f ? m.burnt : m.rust) : paint;
+        // flat tyre / sitting on the rims
+        int flat = broken && R() < 0.6f ? rnd.Next(4) : -1;
+        float sink = burnt ? 0.16f : 0f;
+        var tilt = burnt ? Quaternion.Euler(R(-2.5f, 2.5f), 0, R(-3, 3)) : flat >= 0 ? Quaternion.Euler(flat < 2 ? 1.5f : -1.5f, 0, flat % 2 == 0 ? -2.2f : 2.2f) : Quaternion.identity;
+        var q = rot * tilt;
+        var o = at + Vector3.down * sink;
+        Matrix4x4 M(Vector3 lp) => Matrix4x4.TRS(o + q * lp, q, Vector3.one);
+        Vector3 W(float x, float y, float z) => o + q * new Vector3(x, y, z);
+
+        Add(t.core, M(Vector3.zero), body, true);
+        Add(t.shell, M(Vector3.zero), body, false);
+        // cabin: glass, roof, pillars
+        Material glassM = burnt ? null : broken ? (R() < 0.6f ? m.shattered : m.glass) : m.glass;
+        if (glassM) Add(t.glass, M(Vector3.zero), glassM, false);
+        float roofDrop = burnt ? R(0.04f, 0.18f) : 0;
+        Add(t.roof, Matrix4x4.TRS(o + q * new Vector3(0, -roofDrop, 0), q * Quaternion.Euler(burnt ? R(-3, 3) : 0, 0, burnt ? R(-4, 4) : 0), Vector3.one), body, false);
+        var g = t.g; float px = t.W * 0.415f;
+        foreach (var sx in new[] { -1f, 1f })
         {
-            // gutted cabin: roof sagging on the pillars
-            foreach (var (z, x) in new[] { (0.85f, 0.75f), (0.85f, -0.75f), (-1.5f, 0.75f), (-1.5f, -0.75f) })
-                Box(at + rot * new Vector3(x, 1.15f, z), new Vector3(0.06f, 0.45f, 0.08f), rot, body);
-            Box(at + rot * new Vector3(0, 1.36f, -0.45f), new Vector3(1.55f, 0.04f, 1.4f), rot * Quaternion.Euler(R(-4, 4), 0, R(-5, 5)), glass);
+            Strut(W(sx * px, g[0].y, g[0].x), W(sx * px, g[1].y - roofDrop, g[1].x), 0.07f, body);       // A pillar
+            Strut(W(sx * px, g[3].y, g[3].x), W(sx * px, g[2].y - roofDrop, g[2].x), t.name == "suv" ? 0.16f : 0.11f, body);   // C pillar
+            if (t.bPillar < 50)
+            {
+                float yb = g[3].y + (g[0].y - g[3].y) * Mathf.InverseLerp(g[3].x, g[0].x, t.bPillar);
+                float yt = g[2].y + (g[1].y - g[2].y) * Mathf.InverseLerp(g[2].x, g[1].x, t.bPillar);
+                Strut(W(sx * px, yb, t.bPillar), W(sx * px, yt - roofDrop, t.bPillar), 0.08f, body);
+            }
+            // door gaps, handles, mirror
+            float half = t.W / 2;
+            Box(W(sx * (half + 0.003f), 0.68f, g[0].x + 0.05f), new Vector3(0.006f, 0.5f, 0.012f), q, m.well);
+            if (t.bPillar < 50) Box(W(sx * (half + 0.003f), 0.68f, t.bPillar), new Vector3(0.006f, 0.5f, 0.012f), q, m.well);
+            Box(W(sx * (half + 0.012f), 0.86f, g[0].x - 0.35f), new Vector3(0.025f, 0.03f, 0.14f), q, burnt ? body : m.chrome);
+            if (!burnt) Box(W(sx * (half + 0.09f), g[0].y + 0.06f, g[0].x - 0.08f), new Vector3(0.14f, 0.11f, 0.06f), q, paint);
+            // wheel wells
+            foreach (var wz in new[] { t.wheelF, t.wheelB })
+                Cyl(W(sx * (half - 0.03f), t.wheelR, wz), t.wheelR + 0.06f, 0.08f, q * Quaternion.Euler(0, 0, 90), m.well);
         }
-        if (!burnt) Box(at + rot * new Vector3(0, 1.43f, -0.48f), new Vector3(1.6f, 0.05f, 1.32f), rot, body);
-        foreach (var (x, z) in new[] { (0.82f, 1.38f), (-0.82f, 1.38f), (0.82f, -1.38f), (-0.82f, -1.38f) })
+        // wheels: tyre, alloy rim, hub
+        int wi = 0;
+        foreach (var wz in new[] { t.wheelF, t.wheelB })
+            foreach (var sx in new[] { -1f, 1f })
+            {
+                bool isFlat = wi++ == flat;
+                float r = t.wheelR, cy = burnt ? 0.2f + sink : isFlat ? r - 0.07f : r;
+                var wp = W(sx * t.track, cy - sink, wz); var wr = q * Quaternion.Euler(0, 0, 90);
+                if (!burnt) Add(cylMesh, Matrix4x4.TRS(wp, wr, new Vector3(2 * r, 0.11f, 2 * r * (isFlat ? 0.82f : 1f))), m.tyre, false);
+                Cyl(wp + q * new Vector3(sx * (burnt ? 0.02f : 0.112f), 0, 0), r * 0.64f, 0.02f, wr, burnt ? m.rust : m.rim);
+                if (!burnt) Cyl(wp + q * new Vector3(sx * 0.124f, 0, 0), r * 0.2f, 0.02f, wr, m.plastic);
+            }
+        // front: bumper, grille, headlights, plate; back: bumper, tail lights, plate
+        float fz = t.frontZ, bz = t.backZ, by = t.bumperY;
+        bool lostBumper = broken && R() < 0.3f;
+        if (!lostBumper) Box(W(0, by, fz - 0.02f), new Vector3(t.W - 0.04f, 0.2f, 0.12f), q, burnt ? body : (t.pickup ? m.chrome : paint));
+        else Box(o + q * new Vector3(R(-0.6f, 0.6f), 0.06f, fz + R(0.4f, 1.2f)), new Vector3(t.W - 0.1f, 0.18f, 0.1f), q * Quaternion.Euler(R(-10, 10), R(-30, 30), 80), burnt ? body : paint);
+        Box(W(0, by + 0.24f, fz + 0.005f), new Vector3(t.W * (t.pickup ? 0.5f : 0.36f), t.pickup ? 0.22f : 0.12f, 0.04f), q, t.pickup && !burnt ? m.chrome : m.plastic);
+        foreach (var sx in new[] { -1f, 1f })
         {
-            var wp = at + rot * new Vector3(x, burnt ? 0.24f : 0.33f, z); var wr = rot * Quaternion.Euler(0, 0, 90);
-            if (tyre) Cyl(wp, 0.33f, 0.22f, wr, tyre);
-            Cyl(wp + rot * new Vector3(Mathf.Sign(x) * 0.02f, 0, 0), burnt ? 0.24f : 0.2f, burnt ? 0.2f : 0.24f, wr, rim);
+            Box(W(sx * t.W * 0.33f, by + 0.27f, fz - 0.04f), new Vector3(t.W * 0.24f, 0.11f, 0.08f), q * Quaternion.Euler(0, sx * 12, 0), burnt ? m.plastic : m.lamp);
+            Box(W(sx * t.W * 0.45f, by + 0.27f, fz - 0.14f), new Vector3(0.04f, 0.06f, 0.1f), q, burnt ? m.plastic : m.amber);
+            Box(W(sx * t.W * 0.38f, by + (t.pickup ? 0.45f : 0.42f), bz + 0.03f), new Vector3(t.W * 0.18f, t.pickup ? 0.3f : 0.13f, 0.06f), q, burnt ? m.plastic : m.tail);
         }
-        if (lightM) foreach (var x in new[] { 0.6f, -0.6f })
+        Box(W(0, by, bz + 0.02f), new Vector3(t.W - 0.04f, 0.2f, 0.12f), q, burnt ? body : m.plastic);
+        if (!burnt) { Box(W(0, by + 0.05f, fz + 0.045f), new Vector3(0.5f, 0.11f, 0.01f), q, m.plate); Box(W(0, by + 0.2f, bz - 0.015f), new Vector3(0.5f, 0.11f, 0.01f), q, m.plate); }
+        // pickup bed: sides, tailgate, floor
+        if (t.pickup)
         {
-            Box(at + rot * new Vector3(x, 0.7f, 2.24f), new Vector3(0.36f, 0.12f, 0.05f), rot, lightM);
-            Box(at + rot * new Vector3(x, 0.75f, -2.24f), new Vector3(0.3f, 0.12f, 0.05f), rot, tail);
+            foreach (var sx in new[] { -1f, 1f }) Box(W(sx * (t.W / 2 - 0.04f), 1.2f, -1.58f), new Vector3(0.07f, 0.5f, 2.05f), q, body, true);
+            Box(W(0, 1.2f, bz + 0.05f), new Vector3(t.W - 0.04f, 0.5f, 0.07f), q, body, true);
+            Box(W(0, 0.96f, -1.58f), new Vector3(t.W - 0.1f, 0.04f, 2.05f), q, burnt ? body : m.plastic);
         }
+        // shot up: bullet holes along the doors
+        if (broken || (burnt && R() < 0.5f))
+            for (int i = 0, nh = rnd.Next(6, 16); i < nh; i++)
+            {
+                float sx = R() < 0.5f ? -1 : 1;
+                Box(W(sx * (t.W / 2 + 0.004f), R(0.5f, 0.92f), R(bz + 0.5f, fz - 0.5f)), new Vector3(0.01f, 0.035f, 0.035f), q, m.hole);
+            }
+    }
+
+    static void Strut(Vector3 a, Vector3 b, float thick, Material m)
+    {
+        var d = b - a; Box((a + b) / 2, new Vector3(0.06f, thick, d.magnitude + 0.02f), Quaternion.LookRotation(d, Vector3.up), m);
     }
 
     // ---------- checkpoint by the roundabout ----------
@@ -709,6 +830,20 @@ public static class CityDetail
             var c = Color.Lerp(new Color(0.24f, 0.12f, 0.06f), new Color(0.55f, 0.28f, 0.12f), n1);
             return Color.Lerp(c, new Color(0.06f, 0.05f, 0.05f), Mathf.Clamp01(n2 * 1.4f - 0.5f));
         }, false, wrap: true);
+        Write("Shattered", 256, 256, (x, y) =>
+        {
+            // web of white cracks over dark glass around two impacts
+            float best = 0;
+            foreach (var (ix, iy) in new[] { (90, 150), (180, 70) })
+            {
+                float dx = x - ix, dy = y - iy, rr = Mathf.Sqrt(dx * dx + dy * dy), ang = Mathf.Atan2(dy, dx);
+                float rays = Mathf.Pow(Mathf.Abs(Mathf.Cos(ang * 7 + Noise(x, y, 40, 30) * 2)), 60) * Mathf.Clamp01(1 - rr / 130f);
+                float rings = (Mathf.Abs(Mathf.Sin(rr * 0.22f + Noise(x, y, 20, 31) * 3)) > 0.97f ? 1 : 0) * Mathf.Clamp01(1 - rr / 70f);
+                best = Mathf.Max(best, Mathf.Max(rays, rings) + (rr < 4 ? 1 : 0));
+            }
+            var c = Color.Lerp(new Color(0.08f, 0.1f, 0.11f), new Color(0.85f, 0.88f, 0.9f), Mathf.Clamp01(best));
+            return new Color(c.r, c.g, c.b, 1);
+        }, false);
         Write("NoiseGrey", 128, 128, (x, y) => { float v = 0.85f + Noise(x, y, 32, 12) * 0.25f; return new Color(v, v, v, 1); }, false, wrap: true);
         Write("Shutter", 128, 128, (x, y) =>
         {

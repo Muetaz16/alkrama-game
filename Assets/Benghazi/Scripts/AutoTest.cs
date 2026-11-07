@@ -173,6 +173,17 @@ public class AutoTest : MonoBehaviour
             yield return new WaitForSeconds(0.6f);
             yield return Shot("showcase_roundabout.png");
         }
+        // cars: fine, shot up, burnt out - seen from the middle of the road
+        for (int s = 0; s < 3; s++)
+        {
+            var mk = GameObject.Find("CarMarker" + s); if (!mk) continue;
+            var look = mk.transform.position; var from = look - mk.transform.forward * 6.5f + Vector3.Cross(Vector3.up, mk.transform.forward) * 3f;
+            Teleport(from + Vector3.up * 0.1f);
+            yield return new WaitForSeconds(0.3f);
+            LookAt(look + Vector3.up * 0.6f);
+            yield return new WaitForSeconds(0.5f);
+            yield return Shot($"showcase_car{s}.png");
+        }
         // the lighthouse at its real spot, seen from the street
         var lh = FindLighthouseInScene();
         if (lh != Vector3.zero)
