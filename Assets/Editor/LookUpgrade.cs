@@ -20,6 +20,7 @@ public static class LookUpgrade
         SoldierSetup.PlaceInScene(AssetDatabase.LoadAssetAtPath<GameObject>(SoldierSetup.PrefabPath));
         Run();
         var scene = EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
+        CityDetail.Build();
         GameplaySetup.Run();
         EditorSceneManager.SaveScene(scene);
     }
@@ -290,10 +291,12 @@ public static class LookUpgrade
     }
 
     // facade: keep the window texture, add real plaster grain on top (URP detail maps)
-    static Material Facade(Material src)
+    // Benghazi walls are not one colour: sandstone, grey concrete, ochre, dusty white, pale beige
+    static readonly Color[] FacadeTints = { new(0.80f, 0.71f, 0.58f), new(0.70f, 0.68f, 0.64f), new(0.80f, 0.64f, 0.47f), new(0.86f, 0.83f, 0.76f), new(0.80f, 0.70f, 0.63f) };
+    static Material Facade(Material src, int variant)
     {
         var tex = src.GetTexture("baseColorTexture");
-        var key = "Facade_" + tex.name;
+        var key = "Facade_" + tex.name + (variant > 0 ? "_v" + variant : "");
         if (cache.TryGetValue(key, out var m)) return m;
         var path = $"{Mats}/{key}.mat";
         m = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -301,7 +304,7 @@ public static class LookUpgrade
         m.SetTexture("_BaseMap", tex);
         var st = src.GetVector("baseColorTexture_ST");
         m.SetTextureScale("_BaseMap", new Vector2(st.x, st.y)); m.SetTextureOffset("_BaseMap", new Vector2(st.z, st.w));
-        m.SetColor("_BaseColor", (Color)src.GetColor("baseColorFactor") * new Color(0.80f, 0.71f, 0.58f));   // Benghazi sandstone, not white
+        m.SetColor("_BaseColor", (Color)src.GetColor("baseColorFactor") * FacadeTints[variant % FacadeTints.Length]);
         m.SetFloat("_Smoothness", 0.12f);
         m.SetTexture("_DetailAlbedoMap", AssetDatabase.LoadAssetAtPath<Texture2D>($"{PH}/plastered_wall_02_diff_1k.jpg"));
         m.SetTexture("_DetailNormalMap", AssetDatabase.LoadAssetAtPath<Texture2D>($"{PH}/plastered_wall_02_nor_gl_1k.jpg"));
@@ -338,7 +341,7 @@ public static class LookUpgrade
                 else if (!tex && size.x > 1000 && Near(c, 0.33f, 0.32f, 0.29f)) { dst = Lit("Asphalt", "asphalt_02", new Color(0.82f, 0.8f, 0.78f), 0.18f, 1f); PlanarUV(r, 0.18f); }
                 else if ((tex && tex.width == 64 && tex.height == 64 && size.y > 0.5f && size.y < 3f && Mathf.Max(size.x, size.z) > 100) || (!tex && size.x > 100 && size.z > 200 && Near(c, 0.89f, 0.87f, 0.82f))) { dst = Lit("SeaWall", "plastered_wall_02", new Color(1.04f, 1.03f, 1.0f), 0.25f, 0.5f); PlanarUV(r, 0.25f); }
                 else if (tex && tex.width == 256 && tex.height == 256 && size.y < 0.5f && size.x > 50) { dst = Lit("Promenade", "large_grey_tiles", new Color(1.35f, 1.32f, 1.25f), 0.22f, 0.8f); PlanarUV(r, 0.22f); }
-                else if (tex && size.y > 2f && (tex.width == 128 || tex.width == 512 || tex.width == 1024 || (tex.width == 64 && tex.height == 64)) && !path.Contains("palm")) dst = Facade(src);   // walls: houses, mosques, ruins
+                else if (tex && size.y > 2f && (tex.width == 128 || tex.width == 512 || tex.width == 1024 || (tex.width == 64 && tex.height == 64)) && !path.Contains("palm")) dst = Facade(src, Mathf.Abs((r.name.GetHashCode() ^ (int)(r.bounds.center.x * 7) ^ (int)(r.bounds.center.z * 13)) % FacadeTints.Length));   // walls: houses, mosques, ruins
                 else if (false && tn == "image_27") dst = Frond("FrondGreen", "FrondGreen", Color.white);
                 else if (false && tn == "image_28") dst = Frond("FrondDry", "FrondDry", Color.white);
                 else if (false && tn == "image_29") dst = Frond("FrondBurnt", "FrondBurnt", Color.white);
@@ -407,16 +410,16 @@ public static class LookUpgrade
     static void Environment()
     {
         var sun = Object.FindFirstObjectByType<Light>();
-        sun.intensity = 1.22f; sun.color = new Color(1f, 0.92f, 0.78f);
+        sun.intensity = 1.3f; sun.color = new Color(1f, 0.93f, 0.8f);
         sun.transform.rotation = Quaternion.Euler(32f, -40f, 0f);
         sun.shadowStrength = 0.85f;
         RenderSettings.ambientIntensity = 1f;
         RenderSettings.reflectionIntensity = 1f;
-        RenderSettings.fogDensity = 0.0022f;
-        RenderSettings.fogColor = new Color(0.78f, 0.80f, 0.80f);
+        RenderSettings.fogDensity = 0.0026f;                 // dusty coastal haze gives depth
+        RenderSettings.fogColor = new Color(0.80f, 0.79f, 0.75f);
         var sky = RenderSettings.skybox;
         sky.SetFloat("_SunSize", 0.035f); sky.SetFloat("_AtmosphereThickness", 0.95f);
-        sky.SetColor("_SkyTint", new Color(0.5f, 0.62f, 0.8f)); sky.SetFloat("_Exposure", 1.15f);
+        sky.SetColor("_SkyTint", new Color(0.56f, 0.63f, 0.74f)); sky.SetFloat("_Exposure", 1.12f);
 
         var old = GameObject.Find("Environment"); if (old) Object.DestroyImmediate(old);
         var env = new GameObject("Environment");
@@ -432,7 +435,7 @@ public static class LookUpgrade
 
         var vol = Object.FindFirstObjectByType<Volume>();
         var prof = vol.sharedProfile;
-        if (prof.TryGet<ColorAdjustments>(out var ca)) { ca.postExposure.Override(-0.1f); ca.contrast.Override(14f); ca.saturation.Override(4f); }
+        if (prof.TryGet<ColorAdjustments>(out var ca)) { ca.postExposure.Override(-0.08f); ca.contrast.Override(17f); ca.saturation.Override(-6f); }
         if (prof.TryGet<Bloom>(out var bl)) { bl.intensity.Override(0.5f); bl.threshold.Override(0.95f); }
         if (!prof.Has<ShadowsMidtonesHighlights>()) { var smh = prof.Add<ShadowsMidtonesHighlights>(true); smh.shadows.Override(new Vector4(0.95f, 0.98f, 1.06f, 0)); smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.94f, 0)); }
         EditorUtility.SetDirty(prof);

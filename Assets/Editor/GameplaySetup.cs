@@ -11,6 +11,8 @@ public static class GameplaySetup
         if (!player.GetComponent<WeaponController>()) player.AddComponent<WeaponController>();
         if (!player.GetComponent<MarkerTool>()) player.AddComponent<MarkerTool>();
 
+        var oldMark = GameObject.Find("LighthouseMarker"); if (oldMark) Object.DestroyImmediate(oldMark);
+        new GameObject("LighthouseMarker").transform.position = SceneBuilder.FindLighthouse();
         var old = GameObject.Find("Practice Targets"); if (old) Object.DestroyImmediate(old);
         var root = new GameObject("Practice Targets");
         var steel = new Material(Shader.Find("Universal Render Pipeline/Lit")); steel.SetColor("_BaseColor", new Color(0.85f, 0.32f, 0.12f)); steel.SetFloat("_Smoothness", 0.35f); steel.SetFloat("_Metallic", 0.4f);

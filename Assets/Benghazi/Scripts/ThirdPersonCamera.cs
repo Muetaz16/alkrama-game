@@ -1,8 +1,9 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 
-// Over-the-shoulder camera: mouse / right stick turn it, the player faces where it looks.
-// Pulls in when a wall is between the camera and the soldier.
+// Player camera: first person by default (eye height, crouch lowers it), or over-the-shoulder.
+// Mouse / right stick turn it, the player faces where it looks. Third person pulls in when a wall
+// is between the camera and the soldier.
 public class ThirdPersonCamera : MonoBehaviour
 {
     public PlayerController target;
@@ -16,7 +17,9 @@ public class ThirdPersonCamera : MonoBehaviour
     [HideInInspector] public float yaw;
     [HideInInspector] public bool aimingFov;      // the weapon owns the field of view while aiming
     [HideInInspector] public float baseFov = 65f;
-    float sprintFov, roll, startLean;
+    public bool firstPerson = true;              // Call of Duty view: only the gun; V switches to over-the-shoulder
+    public float eyeHeight = 1.62f, crouchEye = 1.08f;
+    float sprintFov, roll, startLean, eye = 1.62f;
 
     void Start()
     {
@@ -55,6 +58,16 @@ public class ThirdPersonCamera : MonoBehaviour
         roll = Mathf.Lerp(roll, -target.Strafe * 2.2f, 1 - Mathf.Exp(-6 * dt));
         startLean = Mathf.Lerp(startLean, Mathf.Clamp(target.AccelForward * 0.12f, -2.5f, 2.5f), 1 - Mathf.Exp(-8 * dt));
         var rot = Quaternion.Euler(pitch + startLean, yaw, roll);
+        if (firstPerson)
+        {
+            // eyes of the soldier: lower when crouched, a light bob (the gun does most of the moving)
+            eye = Mathf.Lerp(eye, target.crouch ? crouchEye : eyeHeight, 1 - Mathf.Exp(-10 * dt));
+            var eyePos = target.transform.position + Vector3.up * (eye + target.LandDip * 0.6f) + Quaternion.Euler(0, yaw, 0) * (new Vector3(0, 0, 0.1f) + bob * 0.55f);
+            transform.SetPositionAndRotation(eyePos, rot);
+            if (cam) cam.nearClipPlane = 0.02f;
+            return;
+        }
+        if (cam) cam.nearClipPlane = 0.2f;
         var pivot = target.transform.position + Vector3.up * target.LandDip + Quaternion.Euler(0, yaw, 0) * (shoulder + bob);
         var want = pivot - rot * Vector3.forward * distance;
         // keep the camera out of walls

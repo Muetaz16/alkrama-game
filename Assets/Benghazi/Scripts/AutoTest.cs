@@ -51,7 +51,7 @@ public class AutoTest : MonoBehaviour
     // point the camera at a world position
     void LookAt(Vector3 p)
     {
-        var pivot = player.transform.position + Quaternion.Euler(0, cam.yaw, 0) * cam.shoulder;
+        var pivot = cam.firstPerson ? player.transform.position + Vector3.up * cam.eyeHeight : player.transform.position + Quaternion.Euler(0, cam.yaw, 0) * cam.shoulder;
         var d = p - pivot;
         cam.yaw = Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg;
         cam.pitch = -Mathf.Atan2(d.y, new Vector2(d.x, d.z).magnitude) * Mathf.Rad2Deg;
@@ -70,36 +70,74 @@ public class AutoTest : MonoBehaviour
         var near = targets[Mathf.Min(1, targets.Length - 1)];
         log.WriteLine("target distances: " + string.Join(", ", System.Array.ConvertAll(targets, x => Vector3.Distance(x.transform.position, player.transform.position).ToString("F0"))));
         LookAt(near.transform.position + Vector3.up * 0.55f);
+        yield return new WaitForSeconds(0.3f);
+        yield return Shot("fp_rifle_hip.png");
         gun.aimHeld = true;
         yield return new WaitForSeconds(0.6f);
         LookAt(near.transform.position + Vector3.up * 0.55f);
+        yield return null;
+        yield return Shot("fp_rifle_ads.png");
         int before = gun.hits;
         gun.fireHeld = true;
         yield return new WaitForSeconds(0.25f);
-        yield return Shot("shoot_rifle.png");
+        yield return Shot("fp_rifle_fire.png");
         yield return new WaitForSeconds(0.35f);
         gun.fireHeld = false; gun.aimHeld = false;
         log.WriteLine($"rifle burst at {Vector3.Distance(near.transform.position, player.transform.position):F0} m: {gun.hits - before} hits, mag {gun.W.mag}");
+        yield return new WaitForSeconds(0.4f);
+        // reload: the magazine comes out and a new one goes in
+        gun.reloadPressed = true;
+        yield return new WaitForSeconds(0.62f);
+        yield return Shot("fp_reload_magout.png");
         yield return new WaitForSeconds(0.5f);
-        // sniper: farthest target, scope in, one shot
+        yield return Shot("fp_reload_magin.png");
+        yield return new WaitForSeconds(1.4f);
+        log.WriteLine($"reloaded: mag {gun.W.mag}");
+        // sniper: farthest target, scope in, one shot, bolt cycle
         var far = targets[targets.Length - 1];
         gun.switchTo = 1;
-        yield return null;
+        yield return new WaitForSeconds(0.6f);
         LookAt(far.transform.position + Vector3.up * 0.55f);
+        yield return null;
+        yield return Shot("fp_sniper_hip.png");
         gun.aimHeld = true;
         yield return new WaitForSeconds(0.9f);
         LookAt(far.transform.position + Vector3.up * 0.6f);
         yield return null;
-        yield return Shot("shoot_scope.png");
+        yield return Shot("fp_scope.png");
         before = gun.hits;
         gun.fireHeld = true; yield return null; yield return null;
-        yield return new WaitForSeconds(0.3f);
+        gun.aimHeld = false;
+        yield return new WaitForSeconds(0.55f);
+        yield return Shot("fp_sniper_bolt.png");
         log.WriteLine($"sniper at {Vector3.Distance(far.transform.position, player.transform.position):F0} m: {gun.hits - before} hits");
-        gun.aimHeld = false; gun.fireHeld = false;
-        gun.reloadPressed = true;
+        gun.fireHeld = false;
+        yield return new WaitForSeconds(0.8f);
+        // knife: walk up to the near target and slash it
+        var cc = player.GetComponent<CharacterController>();
+        var tp = near.transform.position; var toMe = Vector3.ProjectOnPlane(player.transform.position - tp, Vector3.up).normalized;
+        cc.enabled = false; player.transform.position = new Vector3(tp.x, player.transform.position.y, tp.z) + toMe * 1.4f; cc.enabled = true;
+        gun.switchTo = 2;
         yield return new WaitForSeconds(0.6f);
-        yield return Shot("shoot_after.png");
+        LookAt(near.transform.position + Vector3.up * 0.55f);
+        yield return null;
+        yield return Shot("fp_knife.png");
+        before = gun.knifeHits;
+        gun.fireHeld = true;
+        yield return new WaitForSeconds(0.17f);
+        yield return Shot("fp_knife_slash.png");
+        yield return new WaitForSeconds(0.6f);
+        log.WriteLine($"knife slash: {gun.knifeHits - before} hits");
+        yield return new WaitForSeconds(3.2f);                 // let the target stand up again
+        before = gun.knifeHits;
+        LookAt(near.transform.position + Vector3.up * 0.55f);
+        gun.aimHeld = true; yield return null; gun.aimHeld = false;
+        yield return new WaitForSeconds(0.3f);
+        yield return Shot("fp_knife_stab.png");
+        yield return new WaitForSeconds(0.5f);
+        log.WriteLine($"knife stab: {gun.knifeHits - before} hits");
         gun.switchTo = 0;
+        yield return new WaitForSeconds(0.6f);
         gun.externalInput = false;
         log.Flush();
     }
@@ -135,6 +173,38 @@ public class AutoTest : MonoBehaviour
             yield return new WaitForSeconds(0.6f);
             yield return Shot("showcase_roundabout.png");
         }
+        // the lighthouse at its real spot, seen from the street
+        var lh = FindLighthouseInScene();
+        if (lh != Vector3.zero)
+        {
+            var away = Vector3.ProjectOnPlane(player.transform.position - lh, Vector3.up).normalized;
+            for (int tries = 0; tries < 8; tries++)
+            {
+                var spot = lh + Quaternion.Euler(0, tries * 45f, 0) * away * 40f;
+                if (Physics.Raycast(spot + Vector3.up * 60, Vector3.down, out var hit, 80f) && hit.point.y < 1f && hit.point.y > -0.1f
+                    && !Physics.Linecast(hit.point + Vector3.up * 1.6f, lh + Vector3.up * 12f))
+                { Teleport(hit.point + Vector3.up * 0.1f); break; }
+            }
+            yield return new WaitForSeconds(0.3f);
+            LookAt(lh + Vector3.up * 9f);
+            yield return new WaitForSeconds(0.6f);
+            yield return Shot("showcase_lighthouse.png");
+            log.WriteLine($"lighthouse at {lh}, viewed from {player.transform.position}");
+        }
+    }
+
+    static Vector3 FindLighthouseInScene()
+    {
+        var marker = GameObject.Find("LighthouseMarker");
+        if (marker) return marker.transform.position;
+        foreach (var t in FindObjectsByType<Transform>(FindObjectsSortMode.None))
+            if (t.name.ToLower().Contains("lighthouse") && t.GetComponentInChildren<Renderer>())
+            {
+                var b = new Bounds(t.position, Vector3.zero);
+                foreach (var r in t.GetComponentsInChildren<Renderer>()) b.Encapsulate(r.bounds);
+                if (b.size.y > 10) return new Vector3(b.center.x, 0, b.center.z);
+            }
+        return Vector3.zero;
     }
 
     IEnumerator Run()
@@ -148,7 +218,7 @@ public class AutoTest : MonoBehaviour
         yield return Step("run", Vector2.up, 2f);
         yield return Shot("play_run.png");
         yield return Step("sprint", Vector2.up, 2f, sprint: true);
-        yield return Shot("play_sprint.png");
+        yield return Shot("fp_sprint.png");
         yield return Step("strafe left", Vector2.left, 1.5f);
         yield return Shot("play_strafe.png");
         yield return Step("back", Vector2.down, 1.5f);
@@ -159,6 +229,9 @@ public class AutoTest : MonoBehaviour
         yield return Step("jump", Vector2.up, 0.35f);
         yield return Shot("play_jump.png");
         yield return Step("land", Vector2.zero, 1f);
+        // third person once, to show the soldier with the new rifle
+        var wc = player.GetComponent<WeaponController>();
+        if (wc) { wc.SetView(false); yield return new WaitForSeconds(0.5f); yield return Shot("tp_view.png"); wc.SetView(true); }
         yield return Showcase();
         log.WriteLine("done"); log.Close();
         Application.Quit();
