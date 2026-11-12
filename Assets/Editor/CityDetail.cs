@@ -50,6 +50,8 @@ public static class CityDetail
         Textures();
         var p = GameObject.Find("Player"); player = p ? p.transform.position : new Vector3(9999, 0, 9999);
 
+        RealCars.Init();
+        HideWebCars();
         Streets();
         Lamps();
         Poles();
@@ -60,6 +62,7 @@ public static class CityDetail
         Physics.queriesHitBackfaces = back;
         var root = new GameObject("City Detail");
         Flush(root);
+        RealCars.Spawn(root.transform);
         foreach (var kv in carMarks)
         {
             var mk = new GameObject("CarMarker" + kv.Key).transform; mk.SetParent(root.transform, false);
@@ -67,6 +70,32 @@ public static class CityDetail
         }
         Physics.SyncTransforms();
         Debug.Log($"[detail] placed {counts} parts in {root.transform.childCount} merged meshes");
+    }
+
+    // the web city brings its own block cars (body, cabin, roof, 4 wheels); the real ones replace them
+    static void HideWebCars()
+    {
+        var city = GameObject.Find("Benghazi Corniche"); if (!city) return;
+        int n = 0;
+        foreach (Transform t in city.GetComponentsInChildren<Transform>(true))
+        {
+            if (t.childCount != 7) continue;
+            var rs = t.GetComponentsInChildren<MeshRenderer>(true); if (rs.Length != 7) continue;
+            var b = rs[0].bounds; foreach (var r in rs) b.Encapsulate(r.bounds);
+            float horiz = Mathf.Max(b.size.x, b.size.z);
+            if (horiz < 3.6f || horiz > 5.2f || b.size.y < 1.0f || b.size.y > 2.1f) continue;
+            t.gameObject.SetActive(false); n++;
+        }
+        // ... and its sandbag walls, which are plain boxes (6 x 2 x 1 segments = 82 vertices, 1 m tall)
+        int bags = 0;
+        foreach (var mf in city.GetComponentsInChildren<MeshFilter>(true))
+        {
+            if (!mf.sharedMesh || mf.sharedMesh.vertexCount != 82) continue;
+            var r = mf.GetComponent<MeshRenderer>(); if (!r) continue;
+            if (Mathf.Abs(r.bounds.size.y - 1f) > 0.15f || Mathf.Max(r.bounds.size.x, r.bounds.size.z) > 6f) continue;
+            mf.gameObject.SetActive(false); bags++;
+        }
+        Debug.Log($"[detail] web block cars hidden: {n}, box sandbags hidden: {bags}");
     }
 
     // ---------- map ----------
@@ -442,13 +471,22 @@ public static class CityDetail
                     var p = a + f * s + nn * (abandoned ? R(-r.half + 1.6f, r.half - 1.6f) : side * (r.half - 1.15f));
                     if (NearSpecial(p, 5) || StreetEdge(p, r, out _) < 2f || !OnRoad(p, out var y)) continue;
                     if (!OnRoad(p + f * 2.4f, out _) || !OnRoad(p - f * 2.4f, out _)) continue;
-                    var type = carTypes[R() < 0.35f ? 0 : R() < 0.4f ? 1 : R() < 0.55f ? 3 : 2];
                     float roll = R();
                     int state = roll < 0.45f ? 0 : roll < 0.78f ? 1 : 2;      // 0 fine, 1 shot up / broken, 2 burnt out
                     var rot = Quaternion.LookRotation(f * (R() < 0.5f ? 1 : -1)) * Quaternion.Euler(0, abandoned ? R(-40, 40) : R(-4, 4), 0);
-                    int pc = rnd.Next(paints.Length);
-                    BuildCar(type, new Vector3(p.x, y, p.z), rot, state == 1 ? dirty[pc] : paints[pc], state, m);
-                    if (!carMarks.ContainsKey(state) && !abandoned && Vector3.Distance(p, player) < 120) carMarks[state] = (new Vector3(p.x, y, p.z), nn * side);
+                    float pick = R();
+                    if (RealCars.Ready)                                        // the downloaded sedan and SUV
+                    {
+                        int model = pick < 0.5f || RealCars.ModelCount < 2 ? 0 : 1;
+                        RealCars.Queue(model, new Vector3(p.x, y, p.z), rot, state, rnd);
+                        int mk = model * 10 + state;
+                        if (!carMarks.ContainsKey(mk) && !abandoned && Vector3.Distance(p, player) < 260) carMarks[mk] = (new Vector3(p.x, y, p.z), nn * side);
+                    }
+                    else
+                    {
+                        int pc = rnd.Next(paints.Length);                      // Hilux-style pickup built here
+                        BuildCar(carTypes[3], new Vector3(p.x, y, p.z), rot, state == 1 ? dirty[pc] : paints[pc], state, m);
+                    }
                     n++; if (state == 1) broken++; if (state == 2) burnt++;
                 }
             }

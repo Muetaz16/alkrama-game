@@ -293,10 +293,10 @@ public static class LookUpgrade
     // facade: keep the window texture, add real plaster grain on top (URP detail maps)
     // Benghazi walls are not one colour: sandstone, grey concrete, ochre, dusty white, pale beige
     static readonly Color[] FacadeTints = { new(0.80f, 0.71f, 0.58f), new(0.70f, 0.68f, 0.64f), new(0.80f, 0.64f, 0.47f), new(0.86f, 0.83f, 0.76f), new(0.80f, 0.70f, 0.63f) };
-    static Material Facade(Material src, int variant)
+    static Material Facade(Material src, int variant, bool maps = true)
     {
         var tex = src.GetTexture("baseColorTexture");
-        var key = "Facade_" + tex.name + (variant > 0 ? "_v" + variant : "");
+        var key = "Facade_" + tex.name + (variant > 0 ? "_v" + variant : "") + (maps ? "" : "_plain");
         if (cache.TryGetValue(key, out var m)) return m;
         var path = $"{Mats}/{key}.mat";
         m = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -306,6 +306,11 @@ public static class LookUpgrade
         m.SetTextureScale("_BaseMap", new Vector2(st.x, st.y)); m.SetTextureOffset("_BaseMap", new Vector2(st.z, st.w));
         m.SetColor("_BaseColor", (Color)src.GetColor("baseColorFactor") * FacadeTints[variant % FacadeTints.Length]);
         m.SetFloat("_Smoothness", 0.12f);
+        // depth and glass, worked out from the painted facade: windows and doors sit back in the wall,
+        // frames and cornices stand proud, glass reflects the sky
+        var (nrm, mask) = maps ? FacadeMaps(tex) : (null, null);   // the scanned lighthouse keeps its own surface
+        if (nrm) { m.SetTexture("_BumpMap", nrm); m.SetFloat("_BumpScale", 1.15f); m.EnableKeyword("_NORMALMAP"); }
+        if (mask) { m.SetTexture("_MetallicGlossMap", mask); m.EnableKeyword("_METALLICSPECGLOSSMAP"); m.SetFloat("_Smoothness", 1f); m.SetFloat("_SmoothnessTextureChannel", 0); }
         m.SetTexture("_DetailAlbedoMap", AssetDatabase.LoadAssetAtPath<Texture2D>($"{PH}/plastered_wall_02_diff_1k.jpg"));
         m.SetTexture("_DetailNormalMap", AssetDatabase.LoadAssetAtPath<Texture2D>($"{PH}/plastered_wall_02_nor_gl_1k.jpg"));
         m.SetFloat("_DetailAlbedoMapScale", 0.3f);   // the x2 detail brightens; keep it subtle m.SetFloat("_DetailNormalMapScale", 0.9f);
@@ -314,6 +319,59 @@ public static class LookUpgrade
         EditorUtility.SetDirty(m);
         cache[key] = m;
         return m;
+    }
+
+    static readonly Dictionary<string, (Texture2D, Texture2D)> facadeMaps = new();
+    static (Texture2D normal, Texture2D mask) FacadeMaps(Texture src)
+    {
+        if (facadeMaps.TryGetValue(src.name, out var done)) return done;
+        // read the imported texture through the GPU (sub-assets of the .glb are not readable)
+        int W = Mathf.Min(src.width, 1024), H = Mathf.Max(1, Mathf.RoundToInt(src.height * (W / (float)src.width)));
+        var rt = RenderTexture.GetTemporary(W, H, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+        Graphics.Blit(src, rt);
+        var prev = RenderTexture.active; RenderTexture.active = rt;
+        var read = new Texture2D(W, H, TextureFormat.RGBA32, false); read.ReadPixels(new Rect(0, 0, W, H), 0, 0); read.Apply();
+        RenderTexture.active = prev; RenderTexture.ReleaseTemporary(rt);
+        var px = read.GetPixels32(); Object.DestroyImmediate(read);
+        var hgt = new float[W * H]; var gloss = new float[W * H];
+        for (int i = 0; i < px.Length; i++)
+        {
+            Color c = px[i]; float lum = c.r * 0.3f + c.g * 0.59f + c.b * 0.11f;
+            Color.RGBToHSV(c, out _, out var sat, out _);
+            bool opening = lum < 0.3f;                                   // glass, doorways, shell holes: set back
+            hgt[i] = opening ? 0f : 0.55f + 0.45f * lum;                 // light trim stands a little proud of the wall
+            gloss[i] = lum > 0.07f && lum < 0.3f && sat < 0.45f ? 1f : 0f;   // dark neutral = glass (not black holes, not shutters)
+        }
+        float At(float[] a, int x, int y) => a[((y % H + H) % H) * W + ((x % W + W) % W)];
+        // soften the height a little so edges read as bevels, not razor lines
+        var blur = new float[W * H];
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++)
+            blur[y * W + x] = (At(hgt, x, y) * 4 + At(hgt, x - 1, y) + At(hgt, x + 1, y) + At(hgt, x, y - 1) + At(hgt, x, y + 1)) / 8f;
+        var n = new Texture2D(W, H, TextureFormat.RGBA32, false, true); var mk = new Texture2D(W, H, TextureFormat.RGBA32, false, true);
+        var np = new Color[W * H]; var mp = new Color[W * H];
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++)
+        {
+            float dx = At(blur, x + 1, y) - At(blur, x - 1, y), dy = At(blur, x, y + 1) - At(blur, x, y - 1);
+            var v = new Vector3(-dx * 2.6f, -dy * 2.6f, 1).normalized;
+            np[y * W + x] = new Color(v.x * 0.5f + 0.5f, v.y * 0.5f + 0.5f, v.z * 0.5f + 0.5f, 1);
+            float g = (At(gloss, x, y) * 2 + At(gloss, x - 1, y) + At(gloss, x + 1, y) + At(gloss, x, y - 1) + At(gloss, x, y + 1)) / 6f;
+            mp[y * W + x] = new Color(g * 0.55f, 0, 0, Mathf.Lerp(0.1f, 0.92f, g));     // R metallic, A smoothness
+        }
+        n.SetPixels(np); n.Apply(); mk.SetPixels(mp); mk.Apply();
+        Texture2D Save(Texture2D t, string suffix, bool normal)
+        {
+            var path = $"{Gen}/Facade_{src.name}_{suffix}.png";
+            File.WriteAllBytes(path, t.EncodeToPNG()); Object.DestroyImmediate(t);
+            AssetDatabase.ImportAsset(path);
+            var ti = (TextureImporter)AssetImporter.GetAtPath(path);
+            ti.textureType = normal ? TextureImporterType.NormalMap : TextureImporterType.Default;
+            ti.sRGBTexture = false; ti.alphaIsTransparency = false; ti.wrapMode = TextureWrapMode.Repeat; ti.mipmapEnabled = true; ti.anisoLevel = 4;
+            ti.SaveAndReimport();
+            return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+        }
+        var res = (Save(n, "nrm", true), Save(mk, "mask", false));
+        facadeMaps[src.name] = res;
+        return res;
     }
 
     static bool Near(Color a, float r, float g, float b) => Mathf.Abs(a.r - r) < 0.02f && Mathf.Abs(a.g - g) < 0.02f && Mathf.Abs(a.b - b) < 0.02f;
@@ -340,8 +398,8 @@ public static class LookUpgrade
                 else if (path.Contains("roads") || (path.Contains("roundabout") && !tex && Near(c, 0.23f, 0.23f, 0.23f))) { dst = Lit("Asphalt", "asphalt_02", new Color(0.82f, 0.8f, 0.78f), 0.18f, 1f); PlanarUV(r, 0.18f); }
                 else if (!tex && size.x > 1000 && Near(c, 0.33f, 0.32f, 0.29f)) { dst = Lit("Asphalt", "asphalt_02", new Color(0.82f, 0.8f, 0.78f), 0.18f, 1f); PlanarUV(r, 0.18f); }
                 else if ((tex && tex.width == 64 && tex.height == 64 && size.y > 0.5f && size.y < 3f && Mathf.Max(size.x, size.z) > 100) || (!tex && size.x > 100 && size.z > 200 && Near(c, 0.89f, 0.87f, 0.82f))) { dst = Lit("SeaWall", "plastered_wall_02", new Color(1.04f, 1.03f, 1.0f), 0.25f, 0.5f); PlanarUV(r, 0.25f); }
-                else if (tex && tex.width == 256 && tex.height == 256 && size.y < 0.5f && size.x > 50) { dst = Lit("Promenade", "large_grey_tiles", new Color(1.35f, 1.32f, 1.25f), 0.22f, 0.8f); PlanarUV(r, 0.22f); }
-                else if (tex && size.y > 2f && (tex.width == 128 || tex.width == 512 || tex.width == 1024 || (tex.width == 64 && tex.height == 64)) && !path.Contains("palm")) dst = Facade(src, Mathf.Abs((r.name.GetHashCode() ^ (int)(r.bounds.center.x * 7) ^ (int)(r.bounds.center.z * 13)) % FacadeTints.Length));   // walls: houses, mosques, ruins
+                else if (tex && tex.width == 256 && tex.height == 256 && size.y < 0.5f && size.x > 50) { dst = Lit("Promenade", "large_grey_tiles", new Color(1.18f, 1.14f, 1.06f), 0.3f, 1f); PlanarUV(r, 0.55f); }
+                else if (tex && size.y > 2f && (tex.width == 128 || tex.width == 512 || tex.width == 1024 || tex.width == 2048 || (tex.width == 64 && tex.height == 64)) && !path.Contains("palm")) dst = Facade(src, Mathf.Abs((r.name.GetHashCode() ^ (int)(r.bounds.center.x * 7) ^ (int)(r.bounds.center.z * 13)) % FacadeTints.Length), !path.Contains("model"));   // walls: houses, mosques, ruins
                 else if (false && tn == "image_27") dst = Frond("FrondGreen", "FrondGreen", Color.white);
                 else if (false && tn == "image_28") dst = Frond("FrondDry", "FrondDry", Color.white);
                 else if (false && tn == "image_29") dst = Frond("FrondBurnt", "FrondBurnt", Color.white);
@@ -410,16 +468,16 @@ public static class LookUpgrade
     static void Environment()
     {
         var sun = Object.FindFirstObjectByType<Light>();
-        sun.intensity = 1.3f; sun.color = new Color(1f, 0.93f, 0.8f);
-        sun.transform.rotation = Quaternion.Euler(32f, -40f, 0f);
-        sun.shadowStrength = 0.85f;
-        RenderSettings.ambientIntensity = 1f;
+        sun.intensity = 1.55f; sun.color = new Color(1f, 0.9f, 0.74f);
+        sun.transform.rotation = Quaternion.Euler(27f, -40f, 0f);     // late afternoon: long shadows across the streets
+        sun.shadowStrength = 0.92f;
+        RenderSettings.ambientIntensity = 1.0f;
         RenderSettings.reflectionIntensity = 1f;
-        RenderSettings.fogDensity = 0.0026f;                 // dusty coastal haze gives depth
-        RenderSettings.fogColor = new Color(0.80f, 0.79f, 0.75f);
+        RenderSettings.fogDensity = 0.0034f;                 // dusty coastal haze gives depth
+        RenderSettings.fogColor = new Color(0.83f, 0.80f, 0.74f);
         var sky = RenderSettings.skybox;
-        sky.SetFloat("_SunSize", 0.035f); sky.SetFloat("_AtmosphereThickness", 0.95f);
-        sky.SetColor("_SkyTint", new Color(0.56f, 0.63f, 0.74f)); sky.SetFloat("_Exposure", 1.12f);
+        sky.SetFloat("_SunSize", 0.035f); sky.SetFloat("_AtmosphereThickness", 1.02f);
+        sky.SetColor("_SkyTint", new Color(0.62f, 0.64f, 0.68f)); sky.SetFloat("_Exposure", 1.05f);
 
         var old = GameObject.Find("Environment"); if (old) Object.DestroyImmediate(old);
         var env = new GameObject("Environment");
@@ -435,8 +493,8 @@ public static class LookUpgrade
 
         var vol = Object.FindFirstObjectByType<Volume>();
         var prof = vol.sharedProfile;
-        if (prof.TryGet<ColorAdjustments>(out var ca)) { ca.postExposure.Override(-0.08f); ca.contrast.Override(17f); ca.saturation.Override(-6f); }
-        if (prof.TryGet<Bloom>(out var bl)) { bl.intensity.Override(0.5f); bl.threshold.Override(0.95f); }
+        if (prof.TryGet<ColorAdjustments>(out var ca)) { ca.postExposure.Override(-0.05f); ca.contrast.Override(20f); ca.saturation.Override(-12f); }
+        if (prof.TryGet<Bloom>(out var bl)) { bl.intensity.Override(0.65f); bl.threshold.Override(0.9f); }
         if (!prof.Has<ShadowsMidtonesHighlights>()) { var smh = prof.Add<ShadowsMidtonesHighlights>(true); smh.shadows.Override(new Vector4(0.95f, 0.98f, 1.06f, 0)); smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.94f, 0)); }
         EditorUtility.SetDirty(prof);
     }

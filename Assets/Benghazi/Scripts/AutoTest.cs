@@ -174,11 +174,12 @@ public class AutoTest : MonoBehaviour
             yield return Shot("showcase_roundabout.png");
         }
         // cars: fine, shot up, burnt out - seen from the middle of the road
-        for (int s = 0; s < 3; s++)
+        foreach (var s in new[] { 0, 1, 2, 10, 11, 12 })
         {
             var mk = GameObject.Find("CarMarker" + s); if (!mk) continue;
             var look = mk.transform.position; var from = look - mk.transform.forward * 6.5f + Vector3.Cross(Vector3.up, mk.transform.forward) * 3f;
-            Teleport(from + Vector3.up * 0.1f);
+            if (!Physics.Raycast(from + Vector3.up * 30, Vector3.down, out var g, 40) || g.point.y < -0.1f || g.point.y > 0.6f) continue;   // stand on the street
+            Teleport(g.point + Vector3.up * 0.1f);
             yield return new WaitForSeconds(0.3f);
             LookAt(look + Vector3.up * 0.6f);
             yield return new WaitForSeconds(0.5f);
