@@ -24,6 +24,7 @@ public static class SoldierSetup
         ImportClips();
         var controller = BuildController();
         var prefab = BuildPrefab(controller);
+        BuildEnemyPrefab(controller);
         PlaceInScene(prefab);
         AssetDatabase.SaveAssets();
         Debug.Log("[soldier] setup done");
@@ -115,6 +116,9 @@ public static class SoldierSetup
         var air = sm.AddState("In Air"); air.motion = Clip("jump loop");
         var down = sm.AddState("Land"); down.motion = Clip("jump down");
         sm.defaultState = loco;
+        // falling when killed (enemies): played directly with CrossFade, no way back
+        sm.AddState("Death Front").motion = Clip("death from the front");
+        sm.AddState("Death Back").motion = Clip("death from the back");
 
         T(loco, crouch, 0.2f).AddCondition(AnimatorConditionMode.If, 0, "Crouch");
         T(crouch, loco, 0.2f).AddCondition(AnimatorConditionMode.IfNot, 0, "Crouch");
@@ -156,6 +160,27 @@ public static class SoldierSetup
         var prefab = PrefabUtility.SaveAsPrefabAsset(root, PrefabPath);
         Object.DestroyImmediate(root);
         return prefab;
+    }
+
+    public const string EnemyPrefabPath = "Assets/Benghazi/Enemy.prefab";
+    // the same soldier with the enemy brain instead of the player's controls (tinted desert-tan when he spawns)
+    static void BuildEnemyPrefab(AnimatorController ac)
+    {
+        var root = new GameObject("Enemy");
+        var cc = root.AddComponent<CharacterController>();
+        cc.height = 1.8f; cc.radius = 0.35f; cc.center = new Vector3(0, 0.92f, 0); cc.stepOffset = 0.4f; cc.slopeLimit = 50f;
+        root.AddComponent<EnemyAI>();
+        var model = (GameObject)PrefabUtility.InstantiatePrefab(AssetDatabase.LoadAssetAtPath<GameObject>(Model));
+        model.transform.SetParent(root.transform, false);
+        var anim = model.GetComponent<Animator>();
+        anim.runtimeAnimatorController = ac; anim.applyRootMotion = false;
+        anim.cullingMode = AnimatorCullingMode.CullUpdateTransforms;
+        var b = new Bounds(model.transform.position, Vector3.zero);
+        foreach (var r in model.GetComponentsInChildren<Renderer>()) b.Encapsulate(r.bounds);
+        if (b.size.y > 0.1f) model.transform.localScale *= 1.8f / b.size.y;
+        PrefabUtility.SaveAsPrefabAsset(root, EnemyPrefabPath);
+        Object.DestroyImmediate(root);
+        Debug.Log("[soldier] enemy prefab saved");
     }
 
     // simple rifle (placeholder until a real model): receiver, barrel, magazine, stock, held in the right hand

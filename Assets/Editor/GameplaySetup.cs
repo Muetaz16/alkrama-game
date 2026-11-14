@@ -10,6 +10,8 @@ public static class GameplaySetup
         var player = GameObject.Find("Player");
         if (!player.GetComponent<WeaponController>()) player.AddComponent<WeaponController>();
         if (!player.GetComponent<MarkerTool>()) player.AddComponent<MarkerTool>();
+        if (!player.GetComponent<PlayerHealth>()) player.AddComponent<PlayerHealth>();
+        Enemies(player.transform.position);
 
         var oldMark = GameObject.Find("LighthouseMarker"); if (oldMark) Object.DestroyImmediate(oldMark);
         new GameObject("LighthouseMarker").transform.position = SceneBuilder.FindLighthouse();
@@ -57,6 +59,28 @@ public static class GameplaySetup
             placed++;
         }
         Debug.Log($"[gameplay] weapons on player, {placed} practice targets");
+    }
+
+    // random enemy soldiers: the street spots come from the map; the spawner picks among them while you play
+    static void Enemies(Vector3 playerPos)
+    {
+        var old = GameObject.Find("Enemy Spawner"); if (old) Object.DestroyImmediate(old);
+        var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(SoldierSetup.EnemyPrefabPath);
+        if (!prefab) { Debug.LogWarning("[gameplay] no enemy prefab - run SoldierSetup.Run first"); return; }
+        var data = (System.Collections.Generic.Dictionary<string, object>)MiniJson.Parse(System.IO.File.ReadAllText("Assets/Benghazi/Data/benghazi_corniche_spawns.json"));
+        var spots = new System.Collections.Generic.List<Vector3>();
+        Physics.SyncTransforms();
+        foreach (System.Collections.Generic.List<object> s in (System.Collections.Generic.List<object>)data["enemySpawns"])
+        {
+            var p = new Vector3(-System.Convert.ToSingle(s[0]), 0, System.Convert.ToSingle(s[1]));     // web x -> Unity -x
+            if (!Physics.Raycast(p + Vector3.up * 40, Vector3.down, out var hit, 80f) || hit.point.y < -0.05f || hit.point.y > 0.5f) continue;   // street level only
+            if (Physics.CheckCapsule(hit.point + Vector3.up * 0.6f, hit.point + Vector3.up * 1.6f, 0.45f)) continue;                             // room to stand
+            if (Vector3.Distance(hit.point, playerPos) < 30f) continue;
+            spots.Add(hit.point);
+        }
+        var sp = new GameObject("Enemy Spawner").AddComponent<EnemySpawner>();
+        sp.enemyPrefab = prefab; sp.spots = spots.ToArray();
+        Debug.Log($"[gameplay] enemy spawner with {spots.Count} street spots");
     }
 
     static void Part(Transform parent, PrimitiveType type, Vector3 pos, Vector3 scale, Material m, bool keepCollider = true)

@@ -19,6 +19,7 @@ public class PlayerController : MonoBehaviour
     [HideInInspector] public Vector2 moveInput;  // -1..1, from keyboard/stick (or AutoTest)
     [HideInInspector] public bool sprint, walk, crouch, jumpPressed, aiming;
     public bool externalInput;                   // AutoTest / touch controls drive the inputs
+    [HideInInspector] public bool frozen;        // dead: no moving until the respawn
     [HideInInspector] public float combatUntil;  // kept for the weapon (sprint-to-fire)
 
     public float Speed { get; private set; }
@@ -50,6 +51,7 @@ public class PlayerController : MonoBehaviour
     void Update()
     {
         if (!externalInput) ReadInput();
+        if (frozen) { moveInput = Vector2.zero; sprint = false; jumpPressed = false; }
         float dt = Mathf.Max(Time.deltaTime, 1e-4f);
         var input = Vector2.ClampMagnitude(moveInput, 1f);
 

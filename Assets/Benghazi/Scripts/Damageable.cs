@@ -13,7 +13,7 @@ public class Damageable : MonoBehaviour
 
     void Awake() { maxHealth = health; upright = transform.localRotation; }
 
-    public void Hit(float damage, Vector3 point, Vector3 dir)
+    public virtual void Hit(float damage, Vector3 point, Vector3 dir)
     {
         health -= damage;
         onHit?.Invoke(this);

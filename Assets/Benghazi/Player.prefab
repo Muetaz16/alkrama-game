@@ -535,6 +535,7 @@ MonoBehaviour:
   jumpPressed: 0
   aiming: 0
   externalInput: 0
+  frozen: 0
   combatUntil: 0
 --- !u!1 &5133595873565622045
 GameObject:

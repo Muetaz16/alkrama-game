@@ -221,10 +221,78 @@ public class AutoTest : MonoBehaviour
         return Vector3.zero;
     }
 
+    // an enemy 14 m in front: he should turn and fire; a rifle burst should drop him and count a kill
+    IEnumerator Combat()
+    {
+        var gun = player.GetComponent<WeaponController>(); var hp = player.GetComponent<PlayerHealth>();
+        var spawner = FindFirstObjectByType<EnemySpawner>();
+        if (!gun || !hp || !spawner) { log.WriteLine("combat: no spawner / health"); yield break; }
+        log.WriteLine($"enemies: {EnemyAI.All.Count} alive at start, {spawner.spots.Length} spawn spots");
+        // open ground in front of the player
+        Vector3 at = Vector3.zero; bool ok = false;
+        for (int k = 0; k < 12 && !ok; k++)
+        {
+            var dir = Quaternion.Euler(0, k * 30f, 0) * player.transform.forward; var p = player.transform.position + dir * 14f;
+            if (Physics.Raycast(p + Vector3.up * 20, Vector3.down, out var g, 30f) && g.point.y > -0.05f && g.point.y < 0.5f
+                && !Physics.Linecast(player.transform.position + Vector3.up * 1.6f, g.point + Vector3.up * 1.3f)) { at = g.point; ok = true; }
+        }
+        if (!ok) { log.WriteLine("combat: no open spot"); yield break; }
+        var e = Instantiate(spawner.enemyPrefab, at + Vector3.up * 0.05f, Quaternion.LookRotation(Vector3.ProjectOnPlane(player.transform.position - at, Vector3.up))).GetComponent<EnemyAI>();
+        hp.invulnerable = false; float before = hp.Health;
+        gun.externalInput = true; gun.switchTo = 0;
+        yield return new WaitForSeconds(0.4f);
+        LookAt(e.transform.position + Vector3.up * 1.2f);
+        yield return new WaitForSeconds(2.2f);
+        yield return Shot("enemy_firing.png");
+        log.WriteLine($"enemy sees player {e.SeesPlayer}; player health {before:F0} -> {hp.Health:F0} after 2.6 s under fire");
+        hp.invulnerable = true;
+        int kills = hp.Kills;
+        LookAt(e.transform.position + Vector3.up * 1.2f);
+        gun.aimHeld = true; yield return new WaitForSeconds(0.35f);
+        for (int i = 0; i < 6 && !e.IsDead; i++) { LookAt(e.transform.position + Vector3.up * 1.2f); gun.fireHeld = true; yield return new WaitForSeconds(0.25f); }
+        gun.fireHeld = false; gun.aimHeld = false;
+        yield return new WaitForSeconds(1.0f);
+        yield return Shot("enemy_down.png");
+        log.WriteLine($"enemy dead {e.IsDead}; kills {kills} -> {hp.Kills}, best {hp.Best}");
+        gun.externalInput = false;
+        log.Flush();
+    }
+
+    // walk into the sea: the breath bar should run out and the player drown
+    IEnumerator Drown()
+    {
+        var hp = player.GetComponent<PlayerHealth>(); if (!hp) yield break;
+        var cc = player.GetComponent<CharacterController>();
+        Vector3 sea = Vector3.zero; bool ok = false;
+        for (float rad = 20; rad < 260 && !ok; rad += 15)
+            for (int k = 0; k < 16 && !ok; k++)
+            {
+                var p = player.transform.position + Quaternion.Euler(0, k * 22.5f, 0) * Vector3.forward * rad;
+                if (Physics.Raycast(new Vector3(p.x, 6, p.z), Vector3.down, out var g, 30f) && g.point.y < -2.5f && g.point.y > -8f) { sea = g.point; ok = true; }
+            }
+        if (!ok) { log.WriteLine("drown: no sea found"); yield break; }
+        cc.enabled = false; player.transform.position = sea + Vector3.up * 0.1f; cc.enabled = true;
+        player.moveInput = Vector2.zero;
+        hp.invulnerable = true;                     // only the water can kill him here
+        float t0 = Time.time;
+        yield return new WaitForSeconds(4f);
+        yield return Shot("drown_breath.png");
+        log.WriteLine($"in the sea at depth {sea.y:F1}: in water {hp.InWater}, breath {hp.Breath:F2}, health {hp.Health:F0} after 4 s");
+        while (!hp.Dead && Time.time - t0 < 25f) yield return null;
+        yield return new WaitForSeconds(0.5f);
+        yield return Shot("drown_dead.png");
+        log.WriteLine($"drowned {hp.Dead} ({hp.LastDeath}) after {Time.time - t0:F1} s in the water");
+        yield return new WaitForSeconds(4.5f);
+        log.WriteLine($"respawned: dead {hp.Dead}, health {hp.Health:F0}, pos {player.transform.position}");
+        log.Flush();
+    }
+
     IEnumerator Run()
     {
         yield return new WaitForSeconds(1.5f);
+        var health = player.GetComponent<PlayerHealth>(); if (health) health.invulnerable = true;
         yield return Shooting();
+        yield return Combat();
         yield return Shot("play_start.png");
         yield return Step("idle", Vector2.zero, 1f);
         yield return Step("walk", Vector2.up, 2f, walk: true);
@@ -247,6 +315,7 @@ public class AutoTest : MonoBehaviour
         var wc = player.GetComponent<WeaponController>();
         if (wc) { wc.SetView(false); yield return new WaitForSeconds(0.5f); yield return Shot("tp_view.png"); wc.SetView(true); }
         yield return Showcase();
+        yield return Drown();
         log.WriteLine("done"); log.Close();
         Application.Quit();
     }

@@ -28,6 +28,8 @@ public class WeaponController : MonoBehaviour
     };
     public int current;
     public bool externalInput;                       // AutoTest drives these
+    [HideInInspector] public bool frozen;            // dead: no shooting
+    public static float LastShotTime = -99;          // enemies hear this
     [HideInInspector] public bool fireHeld, aimHeld, reloadPressed, quickKnife, toggleView, holdBreath; [HideInInspector] public int switchTo = -1;
 
     public bool Aiming { get; private set; }
@@ -128,6 +130,7 @@ public class WeaponController : MonoBehaviour
     void Update()
     {
         if (!externalInput) ReadInput();
+        if (frozen) { fireHeld = aimHeld = reloadPressed = quickKnife = false; switchTo = -1; }
         if (toggleView) { SetView(!camRig.firstPerson); toggleView = false; }
         // quick knife: out, one slash, back to the gun
         if (quickKnife && !W.melee && !vm.Busy) { quickFrom = current; switchTo = 2; quickBack = Time.time + 0.75f; }
@@ -217,7 +220,7 @@ public class WeaponController : MonoBehaviour
 
     void Fire()
     {
-        W.mag--;
+        W.mag--; LastShotTime = Time.time;
         var origin = cam.transform.position;
         var aim = AimPoint(out _);
         var dir = (aim - origin).normalized;
@@ -393,7 +396,7 @@ public class WeaponController : MonoBehaviour
 
     // ---------- generated sounds ----------
     // a gunshot made from noise: sharp crack, then a decaying boom
-    static AudioClip Gunshot(float seconds, float body, int seed)
+    public static AudioClip Gunshot(float seconds, float body, int seed)
     {
         int rate = 44100, n = (int)(rate * seconds);
         var data = new float[n]; var rnd = new System.Random(seed); float lp = 0;
