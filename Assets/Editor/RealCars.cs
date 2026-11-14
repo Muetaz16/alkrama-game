@@ -24,6 +24,7 @@ public static class RealCars
         public string name; public Mesh mesh; public float scale; public Bounds b;
         public Material[,] mats;                          // [state 0/1, colour]; burnt is separate
         public Material burnt;
+        public Model lod;                                 // low-detail version shown from a distance
     }
     static Model[] models;
     public static bool Ready => models != null && models.Length > 0;
@@ -42,24 +43,30 @@ public static class RealCars
         };
         foreach (var sp in specs)
         {
-            var glb = $"{Dir}/{sp.name}.glb";
+          Model Build(string nm)
+          {
+            var glb = $"{Dir}/{nm}.glb";
             var mesh = AssetDatabase.LoadAllAssetsAtPath(glb).OfType<Mesh>().FirstOrDefault();
-            var atlasPath = $"{Dir}/{sp.name}_atlas.png";
+            var atlasPath = $"{Dir}/{nm}_atlas.png";
             var ti = AssetImporter.GetAtPath(atlasPath) as TextureImporter;
-            if (!mesh || !ti) { Debug.LogWarning($"[cars] missing {sp.name}"); continue; }
+            if (!mesh || !ti) { Debug.LogWarning($"[cars] missing {nm}"); return null; }
             ti.isReadable = true; ti.mipmapEnabled = false; ti.maxTextureSize = 2048; ti.textureCompression = TextureImporterCompression.Uncompressed; ti.SaveAndReimport();
             var src = AssetDatabase.LoadAssetAtPath<Texture2D>(atlasPath);
-            var m = new Model { name = sp.name, mesh = Smooth(mesh, sp.name), scale = sp.scale, b = mesh.bounds, mats = new Material[2, Colors] };
+            var m = new Model { name = nm, mesh = Smooth(mesh, nm), scale = sp.scale, b = mesh.bounds, mats = new Material[2, Colors] };
             // texture rows may run either way against the UVs: keep the mask that lines up with the paint
             var half = src.GetPixels32(); int SW = src.width, HW = src.width / 2, HH = src.height / 2;
             float Score(bool[] al) { int hit = 0, tot = 0; for (int y = 0; y < HH; y++) for (int x = 0; x < HW; x++) { if (!al[y * HW + x]) continue; tot++; Color.RGBToHSV(half[(2 * y) * SW + 2 * x], out var h, out var sa, out var v); if (sp.paint(h, sa, v)) hit++; } return tot > 0 ? hit / (float)tot : 0; }
             var maskA = PaintableArea(mesh, HW, HH, false); var maskB = PaintableArea(mesh, HW, HH, true);
             float sa1 = Score(maskA), sb1 = Score(maskB);
-            Debug.Log($"[cars] {sp.name} paint match: uv {sa1:F2}, flipped {sb1:F2}");
+            Debug.Log($"[cars] {nm} paint match: uv {sa1:F2}, flipped {sb1:F2}");
             // only the white sedan needs the shape rules (its rims and glass are as light as the paint); the SUV's paint is green
             Variants(m, src, sp.paint, sp.name == "sedan" ? (sb1 > sa1 ? maskB : maskA) : Enumerable.Repeat(true, HW * HH).ToArray());
-            list.Add(m);
-            Debug.Log($"[cars] {sp.name}: {mesh.triangles.Length / 3} triangles, size {mesh.bounds.size * sp.scale}");
+            Debug.Log($"[cars] {nm}: {mesh.triangles.Length / 3} triangles, size {mesh.bounds.size * sp.scale}");
+            return m;
+          }
+          var full = Build(sp.name); if (full == null) continue;
+          full.lod = Build(sp.name + "_lod");
+          list.Add(full);
         }
         models = list.ToArray();
     }
@@ -196,6 +203,7 @@ public static class RealCars
         var m = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = name };
         m.SetTexture("_BaseMap", AssetDatabase.LoadAssetAtPath<Texture2D>(path));
         m.SetColor("_BaseColor", Color.white); m.SetFloat("_Smoothness", smooth); m.SetFloat("_Metallic", metal);
+        m.enableInstancing = true;
         m.SetFloat("_Cull", 0); m.doubleSidedGI = true;         // a few simplified triangles face inwards
         AssetDatabase.CreateAsset(m, mpath);
         return m;
@@ -230,12 +238,26 @@ public static class RealCars
             var m = models[q.m];
             var go = new GameObject($"{m.name} {(q.s == 2 ? "burnt" : q.s == 1 ? "shot" : "")}");
             go.transform.SetParent(holder, false);
-            go.isStatic = true;
             float sink = q.s == 2 ? 0.14f : 0f;
             go.transform.SetPositionAndRotation(q.at + Vector3.down * sink, q.rot * q.tilt);
             go.transform.localScale = Vector3.one * m.scale * (q.s == 2 ? 0.985f : 1f);
-            go.AddComponent<MeshFilter>().sharedMesh = m.mesh;
-            go.AddComponent<MeshRenderer>().sharedMaterial = q.s == 2 ? m.burnt : m.mats[q.s, q.c];
+            // full detail only when you are close; a 2 000-triangle version further off; nothing when tiny on screen
+            Renderer Part(Model mm, string nm2)
+            {
+                var c = new GameObject(nm2); c.transform.SetParent(go.transform, false);
+                c.AddComponent<MeshFilter>().sharedMesh = mm.mesh;
+                var mr = c.AddComponent<MeshRenderer>(); mr.sharedMaterial = q.s == 2 ? mm.burnt : mm.mats[q.s, q.c];
+                return mr;
+            }
+            var near = Part(m, "LOD0");
+            var lg = go.AddComponent<LODGroup>();
+            if (m.lod != null)
+            {
+                var far = Part(m.lod, "LOD1");
+                lg.SetLODs(new[] { new LOD(0.11f, new[] { near }), new LOD(0.014f, new[] { far }) });
+            }
+            else lg.SetLODs(new[] { new LOD(0.014f, new[] { near }) });
+            lg.RecalculateBounds();
             var bc = go.AddComponent<BoxCollider>(); bc.center = m.b.center; bc.size = m.b.size * 0.96f;
         }
         Debug.Log($"[cars] placed {queue.Count} real cars");

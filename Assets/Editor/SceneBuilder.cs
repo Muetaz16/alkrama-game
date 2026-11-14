@@ -120,7 +120,7 @@ public static class SceneBuilder
         var data = ScriptableObject.CreateInstance<UniversalRendererData>();
         AssetDatabase.CreateAsset(data, dir + "/URP_Renderer.asset");
         var pc = UniversalRenderPipelineAsset.Create(data);
-        pc.shadowDistance = 160f; pc.shadowCascadeCount = 4; pc.msaaSampleCount = 4;
+        pc.shadowDistance = 95f; pc.shadowCascadeCount = 3; pc.msaaSampleCount = 2;   // shadows past ~100 m are lost in the haze anyway
         pc.supportsHDR = true;
         AssetDatabase.CreateAsset(pc, dir + "/URP_PC.asset");
         var phone = UniversalRenderPipelineAsset.Create(data);

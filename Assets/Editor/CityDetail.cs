@@ -783,6 +783,7 @@ public static class CityDetail
             AssetDatabase.AddObjectToAsset(mesh, holder);
             var go = new GameObject(mesh.name); go.transform.SetParent(root.transform, false);
             go.isStatic = true;
+            go.layer = NoShadow.Contains(b.mat.name) ? 21 : 20;      // the camera stops drawing these at a distance (ThirdPersonCamera)
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = b.mat;
             if (b.mat.renderQueue >= (int)RenderQueue.Transparent - 50) mr.shadowCastingMode = ShadowCastingMode.Off;

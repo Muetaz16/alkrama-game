@@ -22,22 +22,24 @@ public class AutoTest : MonoBehaviour
         if (!Application.isEditor) outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../../unity_shots"));
         Directory.CreateDirectory(outDir);
         log = new StreamWriter(Path.Combine(outDir, "autotest.log"));
+        log.WriteLine($"loaded after {Time.realtimeSinceStartup:F1} s, {SystemInfo.graphicsDeviceName}, {Screen.width}x{Screen.height}"); log.Flush();
         StartCoroutine(Run());
     }
 
     IEnumerator Step(string name, Vector2 move, float secs, bool sprint = false, bool walk = false, bool crouch = false, float turn = 0f)
     {
         player.moveInput = move; player.sprint = sprint; player.walk = walk; player.crouch = crouch;
-        var start = player.transform.position;
+        var start = player.transform.position; int frames = 0; float t0 = Time.realtimeSinceStartup, worst = 0;
         for (float t = 0; t < secs; t += Time.deltaTime)
         {
+            frames++; worst = Mathf.Max(worst, Time.unscaledDeltaTime);
             cam.lookDelta = new Vector2(turn * Time.deltaTime, 0);
             yield return null;
         }
         var moved = Vector3.Distance(start, player.transform.position);
         var anim = player.GetComponentInChildren<Animator>();
         var clip = anim.GetCurrentAnimatorClipInfo(0);
-        log.WriteLine($"{name}: moved {moved:F2} m in {secs}s ({moved / secs:F2} m/s), grounded {player.GetComponent<CharacterController>().isGrounded}, pos {player.transform.position}, clip {(clip.Length > 0 ? clip[0].clip.name : "-")}");
+        log.WriteLine($"{name}: {frames / Mathf.Max(0.01f, Time.realtimeSinceStartup - t0):F0} fps (worst frame {worst * 1000:F0} ms), moved {moved:F2} m in {secs}s ({moved / secs:F2} m/s), grounded {player.GetComponent<CharacterController>().isGrounded}, pos {player.transform.position}, clip {(clip.Length > 0 ? clip[0].clip.name : "-")}");
         log.Flush();
     }
 
