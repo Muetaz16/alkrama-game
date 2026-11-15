@@ -244,17 +244,70 @@ public class AutoTest : MonoBehaviour
         LookAt(e.transform.position + Vector3.up * 1.2f);
         yield return new WaitForSeconds(2.2f);
         yield return Shot("enemy_firing.png");
+        log.WriteLine($"enemy mode {e.Mode}, crouched {e.Crouched}, cover moves {e.CoverMoves}, path left {e.PathLeft:F1}");
         log.WriteLine($"enemy sees player {e.SeesPlayer}; player health {before:F0} -> {hp.Health:F0} after 2.6 s under fire");
         hp.invulnerable = true;
         int kills = hp.Kills;
         LookAt(e.transform.position + Vector3.up * 1.2f);
         gun.aimHeld = true; yield return new WaitForSeconds(0.35f);
-        for (int i = 0; i < 6 && !e.IsDead; i++) { LookAt(e.transform.position + Vector3.up * 1.2f); gun.fireHeld = true; yield return new WaitForSeconds(0.25f); }
+        for (int i = 0; i < 10 && !e.IsDead; i++) { LookAt(e.transform.position + Vector3.up * (e.Crouched ? 0.9f : 1.2f)); gun.fireHeld = true; yield return new WaitForSeconds(0.25f); }
         gun.fireHeld = false; gun.aimHeld = false;
+        log.WriteLine($"enemy after the burst: mode {e.Mode}, crouched {e.Crouched}, cover moves {e.CoverMoves}, dead {e.IsDead}");
+        if (!e.IsDead) e.Hit(500, e.transform.position + Vector3.up, player.transform.forward);   // he got behind cover: finish him to test the kill record
         yield return new WaitForSeconds(1.0f);
         yield return Shot("enemy_down.png");
         log.WriteLine($"enemy dead {e.IsDead}; kills {kills} -> {hp.Kills}, best {hp.Best}");
         gun.externalInput = false;
+        log.Flush();
+    }
+
+    // an enemy out of sight, 35-70 m away by road: told where the player is, he must find a way round the
+    // buildings, then take cover and fight from it
+    IEnumerator EnemyMovement()
+    {
+        var hp = player.GetComponent<PlayerHealth>(); var spawner = FindFirstObjectByType<EnemySpawner>();
+        if (!hp || !spawner) yield break;
+        hp.invulnerable = true;
+        foreach (var o in EnemyAI.All.ToArray()) if (o) Destroy(o.gameObject);                 // a clean street for the test
+        yield return null;
+        var eye = player.transform.position + Vector3.up * 1.6f;
+        var tri = UnityEngine.AI.NavMesh.CalculateTriangulation();
+        bool pOn = UnityEngine.AI.NavMesh.SamplePosition(player.transform.position, out var pn, 2f, UnityEngine.AI.NavMesh.AllAreas);
+        log.WriteLine($"movement: navmesh {tri.indices.Length / 3} triangles at runtime; player on it {pOn} ({(pOn ? Vector3.Distance(pn.position, player.transform.position) : -1):F1} m)");
+        int nRange = 0, nHidden = 0, nPath = 0, nRound = 0;
+        EnemyAI e = null; float straight = 0, path = 0;
+        foreach (var s in spawner.spots)
+        {
+            straight = Vector3.Distance(s, player.transform.position);
+            if (straight < 30f || straight > 90f) continue; nRange++;
+            if (!Physics.Linecast(eye, s + Vector3.up * 1.4f) || !Physics.Linecast(eye + Vector3.up * 3f, s + Vector3.up * 4f)) continue; nHidden++;   // hidden by a building, not a palm
+            var np = new UnityEngine.AI.NavMeshPath();
+            if (!UnityEngine.AI.NavMesh.CalculatePath(s, pOn ? pn.position : player.transform.position, UnityEngine.AI.NavMesh.AllAreas, np) || np.status != UnityEngine.AI.NavMeshPathStatus.PathComplete) continue; nPath++;
+            path = 0; for (int i = 1; i < np.corners.Length; i++) path += Vector3.Distance(np.corners[i - 1], np.corners[i]);
+            nRound++;                                                       // want a way round, not a straight line
+            e = Instantiate(spawner.enemyPrefab, s, Quaternion.identity).GetComponent<EnemyAI>(); break;
+        }
+        log.WriteLine($"  spots in range {nRange}, hidden {nHidden}, with a full path {nPath}, path goes round {nRound}");
+        if (!e) { log.WriteLine("movement: no hidden spot with a path round"); yield break; }
+        yield return null;
+        e.Alert(player.transform.position);
+        log.WriteLine($"movement: enemy {straight:F0} m away in a straight line, {path:F0} m by road");
+        float t0 = Time.time; var start = e.transform.position; bool saw = false;
+        while (Time.time - t0 < 25f && !e.IsDead)
+        {
+            if (e.SeesPlayer && !saw) { saw = true; log.WriteLine($"  sees the player after {Time.time - t0:F1} s, {Vector3.Distance(e.transform.position, player.transform.position):F0} m away (walked {Vector3.Distance(start, e.transform.position):F0} m)"); }
+            if (saw && e.Mode == EnemyAI.State.Cover && e.Crouched) break;
+            yield return null;
+        }
+        log.WriteLine($"  after {Time.time - t0:F1} s: mode {e.Mode}, crouched {e.Crouched}, cover moves {e.CoverMoves}, {Vector3.Distance(e.transform.position, player.transform.position):F0} m from the player");
+        LookAt(e.transform.position + Vector3.up * 1.0f);
+        yield return new WaitForSeconds(0.4f);
+        yield return Shot("enemy_cover.png");
+        // watch him peek and duck for a few seconds
+        int peeks = 0; bool wasCrouched = e.Crouched; float t1 = Time.time;
+        while (Time.time - t1 < 8f && !e.IsDead) { if (wasCrouched && !e.Crouched) peeks++; wasCrouched = e.Crouched; yield return null; }
+        log.WriteLine($"  in 8 s: popped up {peeks} times, mode {e.Mode}, cover moves {e.CoverMoves}");
+        Destroy(e.gameObject);
         log.Flush();
     }
 
@@ -293,6 +346,7 @@ public class AutoTest : MonoBehaviour
         var health = player.GetComponent<PlayerHealth>(); if (health) health.invulnerable = true;
         yield return Shooting();
         yield return Combat();
+        yield return EnemyMovement();
         yield return Shot("play_start.png");
         yield return Step("idle", Vector2.zero, 1f);
         yield return Step("walk", Vector2.up, 2f, walk: true);

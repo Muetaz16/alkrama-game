@@ -11,6 +11,7 @@ public static class GameplaySetup
         if (!player.GetComponent<WeaponController>()) player.AddComponent<WeaponController>();
         if (!player.GetComponent<MarkerTool>()) player.AddComponent<MarkerTool>();
         if (!player.GetComponent<PlayerHealth>()) player.AddComponent<PlayerHealth>();
+        BakeNavMesh();
         Enemies(player.transform.position);
 
         var oldMark = GameObject.Find("LighthouseMarker"); if (oldMark) Object.DestroyImmediate(oldMark);
@@ -61,6 +62,47 @@ public static class GameplaySetup
         Debug.Log($"[gameplay] weapons on player, {placed} practice targets");
     }
 
+    // re-bake only the walkable map (and the spawn spots that depend on it)
+    public static void NavOnly()
+    {
+        var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
+        var player = GameObject.Find("Player");
+        BakeNavMesh(); Enemies(player.transform.position);
+        UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene);
+    }
+
+    // walkable map for the enemies: everything with a collider, the sea marked unwalkable (one box per water strip)
+    static void BakeNavMesh()
+    {
+        var old = GameObject.Find("NavMesh"); if (old) Object.DestroyImmediate(old);
+        var go = new GameObject("NavMesh");
+        foreach (var st in SceneBuilder.ParseSea())
+        {
+            var v = new GameObject("sea").AddComponent<Unity.AI.Navigation.NavMeshModifierVolume>();
+            v.transform.SetParent(go.transform, false);
+            v.center = new Vector3(-(st[0] + st[1]) / 2, -9f, (st[2] + st[3]) / 2);   // web x -> Unity -x; down to the deepest sea floor
+            v.size = new Vector3(Mathf.Abs(st[1] - st[0]) + 0.6f, 19f, Mathf.Abs(st[3] - st[2]) + 0.6f);
+            v.area = 1;                                                             // Not Walkable
+        }
+        var surf = go.AddComponent<Unity.AI.Navigation.NavMeshSurface>();
+        surf.collectObjects = Unity.AI.Navigation.CollectObjects.All;
+        surf.useGeometry = UnityEngine.AI.NavMeshCollectGeometry.PhysicsColliders;
+        surf.layerMask = ~((1 << 2) | (1 << 21));                                   // not "ignore raycast" (cases) or flat road marks
+        surf.overrideVoxelSize = true; surf.voxelSize = 0.17f;
+        surf.overrideTileSize = true; surf.tileSize = 128;
+        surf.minRegionArea = 6f;
+        var player = GameObject.Find("Player"); if (player) player.SetActive(false);   // don't carve a hole where he stands
+        var t = System.Diagnostics.Stopwatch.StartNew();
+        surf.BuildNavMesh();
+        if (player) player.SetActive(true);
+        const string path = "Assets/Benghazi/NavMesh.asset";
+        AssetDatabase.DeleteAsset(path);
+        AssetDatabase.CreateAsset(surf.navMeshData, path);
+        surf.navMeshData = AssetDatabase.LoadAssetAtPath<UnityEngine.AI.NavMeshData>(path);
+        var tri = UnityEngine.AI.NavMesh.CalculateTriangulation();
+        Debug.Log($"[gameplay] navmesh baked in {t.Elapsed.TotalSeconds:F0} s: {tri.indices.Length / 3} triangles, sea volumes {go.transform.childCount}");
+    }
+
     // random enemy soldiers: the street spots come from the map; the spawner picks among them while you play
     static void Enemies(Vector3 playerPos)
     {
@@ -76,6 +118,8 @@ public static class GameplaySetup
             if (!Physics.Raycast(p + Vector3.up * 40, Vector3.down, out var hit, 80f) || hit.point.y < -0.05f || hit.point.y > 0.5f) continue;   // street level only
             if (Physics.CheckCapsule(hit.point + Vector3.up * 0.6f, hit.point + Vector3.up * 1.6f, 0.45f)) continue;                             // room to stand
             if (Vector3.Distance(hit.point, playerPos) < 30f) continue;
+            if (!UnityEngine.AI.NavMesh.SamplePosition(hit.point, out var nh, 1.2f, UnityEngine.AI.NavMesh.AllAreas)) continue;   // on the walkable map
+            hit.point = nh.position;
             spots.Add(hit.point);
         }
         var sp = new GameObject("Enemy Spawner").AddComponent<EnemySpawner>();
