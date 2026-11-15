@@ -20,6 +20,7 @@ public static class LookUpgrade
         SoldierSetup.PlaceInScene(AssetDatabase.LoadAssetAtPath<GameObject>(SoldierSetup.PrefabPath));
         Run();
         var scene = EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
+        Seafront.Build();
         CityDetail.Build();
         GameplaySetup.Run();
         EditorSceneManager.SaveScene(scene);
@@ -495,6 +496,17 @@ public static class LookUpgrade
         var prof = vol.sharedProfile;
         if (prof.TryGet<ColorAdjustments>(out var ca)) { ca.postExposure.Override(-0.05f); ca.contrast.Override(20f); ca.saturation.Override(-12f); }
         if (prof.TryGet<Bloom>(out var bl)) { bl.intensity.Override(0.65f); bl.threshold.Override(0.9f); }
+        // film look: fine grain, a touch of lens fringing, light motion blur; depth of field is switched on by
+        // the weapon while aiming down the sights
+        if (!prof.TryGet<FilmGrain>(out var fg)) fg = prof.Add<FilmGrain>(true);
+        fg.type.Override(FilmGrainLookup.Thin1); fg.intensity.Override(0.22f); fg.response.Override(0.75f);
+        if (!prof.TryGet<ChromaticAberration>(out var chr)) chr = prof.Add<ChromaticAberration>(true);
+        chr.intensity.Override(0.07f);
+        if (!prof.TryGet<MotionBlur>(out var mb)) mb = prof.Add<MotionBlur>(true);
+        mb.intensity.Override(0.16f); mb.quality.Override(MotionBlurQuality.Low);
+        if (!prof.TryGet<DepthOfField>(out var dof)) dof = prof.Add<DepthOfField>(true);
+        dof.mode.Override(DepthOfFieldMode.Off); dof.focalLength.Override(55f); dof.aperture.Override(4f); dof.bladeCount.Override(6);
+        if (prof.TryGet<Vignette>(out var vg)) { vg.intensity.Override(0.24f); vg.smoothness.Override(0.45f); }
         if (!prof.Has<ShadowsMidtonesHighlights>()) { var smh = prof.Add<ShadowsMidtonesHighlights>(true); smh.shadows.Override(new Vector4(0.95f, 0.98f, 1.06f, 0)); smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.94f, 0)); }
         EditorUtility.SetDirty(prof);
     }

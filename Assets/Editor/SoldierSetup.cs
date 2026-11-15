@@ -24,7 +24,7 @@ public static class SoldierSetup
         ImportClips();
         var controller = BuildController();
         var prefab = BuildPrefab(controller);
-        BuildEnemyPrefab(controller);
+        BuildEnemyPrefab(BuildEnemyController());
         PlaceInScene(prefab);
         AssetDatabase.SaveAssets();
         Debug.Log("[soldier] setup done");
@@ -162,6 +162,52 @@ public static class SoldierSetup
         return prefab;
     }
 
+    const string EnemyControllerPath = Dir + "/Enemy.controller";
+    // the enemies' animation, set up like the web game's: one movement set at a time (walk / run / sprint /
+    // crouch-walk, 8 directions each) played at the speed the soldier really moves; standing and crouched
+    // idles that blend from rifle-lowered to aiming with "Raise"; six ways to die
+    static AnimatorController BuildEnemyController()
+    {
+        AssetDatabase.DeleteAsset(EnemyControllerPath);
+        var ac = AnimatorController.CreateAnimatorControllerAtPath(EnemyControllerPath);
+        ac.AddParameter("VelX", AnimatorControllerParameterType.Float);
+        ac.AddParameter("VelZ", AnimatorControllerParameterType.Float);
+        ac.AddParameter("Raise", AnimatorControllerParameterType.Float);
+        ac.AddParameter("Crouch", AnimatorControllerParameterType.Bool);
+        ac.AddParameter(new AnimatorControllerParameter { name = "AnimSpeed", type = AnimatorControllerParameterType.Float, defaultFloat = 1f });
+        var sm = ac.layers[0].stateMachine;
+        BlendTree IdleBlend(string relaxed, string aiming)
+        {
+            var t = new BlendTree { name = relaxed + " / " + aiming, blendType = BlendTreeType.Simple1D, blendParameter = "Raise", hideFlags = HideFlags.HideInHierarchy };
+            AssetDatabase.AddObjectToAsset(t, ac);
+            t.AddChild(Clip(relaxed), 0f); t.AddChild(Clip(aiming), 1f);
+            return t;
+        }
+        var all8 = new (string, Vector2)[] {
+            ("forward", new Vector2(0, 1)), ("forward left", new Vector2(-0.7071f, 0.7071f)), ("forward right", new Vector2(0.7071f, 0.7071f)),
+            ("left", new Vector2(-1, 0)), ("right", new Vector2(1, 0)),
+            ("backward", new Vector2(0, -1)), ("backward left", new Vector2(-0.7071f, -0.7071f)), ("backward right", new Vector2(0.7071f, -0.7071f)) };
+        var loco = ac.CreateBlendTreeInController("Locomotion", out var tree, 0);
+        tree.blendType = BlendTreeType.FreeformDirectional2D; tree.blendParameter = "VelX"; tree.blendParameterY = "VelZ";
+        tree.AddChild(IdleBlend("idle", "idle aiming"), Vector2.zero);
+        foreach (var (sfx, d) in all8) tree.AddChild(Clip("walk " + sfx), d * PlayerController.WalkSpeed);
+        foreach (var (sfx, d) in all8) tree.AddChild(Clip("run " + sfx), d * PlayerController.RunSpeed);
+        foreach (var (sfx, d) in all8) tree.AddChild(Clip("sprint " + sfx), d * PlayerController.SprintSpeed);
+        loco.speedParameterActive = true; loco.speedParameter = "AnimSpeed";
+        var crouch = ac.CreateBlendTreeInController("Crouch", out var ctree, 0);
+        ctree.blendType = BlendTreeType.FreeformDirectional2D; ctree.blendParameter = "VelX"; ctree.blendParameterY = "VelZ";
+        ctree.AddChild(IdleBlend("idle crouching", "idle crouching aiming"), Vector2.zero);
+        foreach (var (sfx, d) in all8) ctree.AddChild(Clip("walk crouching " + sfx), d * PlayerController.CrouchSpeed);
+        crouch.speedParameterActive = true; crouch.speedParameter = "AnimSpeed";
+        sm.defaultState = loco;
+        T(loco, crouch, 0.25f).AddCondition(AnimatorConditionMode.If, 0, "Crouch");
+        T(crouch, loco, 0.25f).AddCondition(AnimatorConditionMode.IfNot, 0, "Crouch");
+        foreach (var d in new[] { "death from the front", "death from the back", "death from right", "death from front headshot", "death from back headshot", "death crouching headshot front" })
+            sm.AddState(d).motion = Clip(d);
+        AssetDatabase.SaveAssets();
+        return ac;
+    }
+
     public const string EnemyPrefabPath = "Assets/Benghazi/Enemy.prefab";
     // the same soldier with the enemy brain instead of the player's controls (tinted desert-tan when he spawns)
     static void BuildEnemyPrefab(AnimatorController ac)
@@ -251,6 +297,7 @@ public static class SoldierSetup
     public static void BuildWindows()
     {
         var outPath = Path.GetFullPath("../builds/win/Benghazi.exe");
+        PlayerSettings.runInBackground = true;      // keep playing (and testing) when the window loses focus
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {
             scenes = new[] { ScenePath }, locationPathName = outPath,

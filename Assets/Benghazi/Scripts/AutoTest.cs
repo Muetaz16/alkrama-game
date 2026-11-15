@@ -7,7 +7,7 @@ using UnityEngine;
 // and jumps, saves screenshots to ../unity_shots/ and a log of positions, then quits.
 public class AutoTest : MonoBehaviour
 {
-    PlayerController player;
+    PlayerController player; float startYaw;
     ThirdPersonCamera cam;
     StreamWriter log;
     string outDir;
@@ -17,7 +17,7 @@ public class AutoTest : MonoBehaviour
         if (!System.Environment.CommandLine.Contains("-autotest")) { enabled = false; return; }
         player = FindFirstObjectByType<PlayerController>();
         cam = FindFirstObjectByType<ThirdPersonCamera>();
-        player.externalInput = true; cam.externalInput = true;
+        player.externalInput = true; cam.externalInput = true; startYaw = player.yaw;
         outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../unity_shots"));
         if (!Application.isEditor) outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../../unity_shots"));
         Directory.CreateDirectory(outDir);
@@ -306,8 +306,45 @@ public class AutoTest : MonoBehaviour
         // watch him peek and duck for a few seconds
         int peeks = 0; bool wasCrouched = e.Crouched; float t1 = Time.time;
         while (Time.time - t1 < 8f && !e.IsDead) { if (wasCrouched && !e.Crouched) peeks++; wasCrouched = e.Crouched; yield return null; }
-        log.WriteLine($"  in 8 s: popped up {peeks} times, mode {e.Mode}, cover moves {e.CoverMoves}");
+        log.WriteLine($"  in 8 s: popped up {peeks} times, mode {e.Mode}, cover moves {e.CoverMoves}; all enemies so far fired {EnemyAI.ShotsFired} rounds, threw {EnemyAI.GrenadesThrown} grenades");
         Destroy(e.gameObject);
+        log.Flush();
+    }
+
+    // three alerted enemies 14-24 m away: screenshots every 1.5 s of how they run, take cover, peek and shoot
+    IEnumerator EnemyWatch()
+    {
+        var hp = player.GetComponent<PlayerHealth>(); var spawner = FindFirstObjectByType<EnemySpawner>();
+        if (!hp || !spawner) yield break;
+        hp.invulnerable = true;
+        foreach (var o in EnemyAI.All.ToArray()) if (o) Destroy(o.gameObject);
+        yield return null;
+        var list = new System.Collections.Generic.List<EnemyAI>();
+        var eye = player.transform.position + Vector3.up * 1.6f;
+        for (int k = 0; k < 24 && list.Count < 3; k++)
+        {
+            var dir = Quaternion.Euler(0, k * 15f, 0) * player.transform.forward; var p = player.transform.position + dir * (14f + (k % 3) * 5f);
+            if (!UnityEngine.AI.NavMesh.SamplePosition(p, out var nh, 2f, UnityEngine.AI.NavMesh.AllAreas) || nh.position.y < -0.2f || nh.position.y > 0.6f) continue;
+            if (Physics.Linecast(eye, nh.position + Vector3.up * 1.3f)) continue;
+            bool near = false; foreach (var o in list) if (Vector3.Distance(o.transform.position, nh.position) < 5f) near = true; if (near) continue;
+            var e = Instantiate(spawner.enemyPrefab, nh.position, Quaternion.LookRotation(Vector3.ProjectOnPlane(player.transform.position - nh.position, Vector3.up))).GetComponent<EnemyAI>();
+            list.Add(e);
+        }
+        yield return null;
+        foreach (var e in list) e.Alert(player.transform.position);
+        log.WriteLine($"watch: {list.Count} enemies 14-24 m away");
+        for (int i = 0; i < 6; i++)
+        {
+            yield return new WaitForSeconds(1.5f);
+            EnemyAI look = null; float best = 1e9f;
+            foreach (var e in list) if (e && !e.IsDead) { float d = Vector3.Distance(e.transform.position, player.transform.position); if (d < best) { best = d; look = e; } }
+            if (look) LookAt(look.transform.position + Vector3.up * 1.0f);
+            yield return null;
+            yield return Shot($"watch_{i}.png");
+            log.WriteLine($"  {i * 1.5f + 1.5f:F1} s: " + string.Join("; ", list.ConvertAll(e => e ? $"{e.Mode} crouched {e.Crouched} sees {e.SeesPlayer} {Vector3.Distance(e.transform.position, player.transform.position):F0} m" : "gone")));
+        }
+        log.WriteLine($"  rounds fired {EnemyAI.ShotsFired}, grenades {EnemyAI.GrenadesThrown}");
+        foreach (var e in list) if (e) Destroy(e.gameObject);
         log.Flush();
     }
 
@@ -340,13 +377,66 @@ public class AutoTest : MonoBehaviour
         log.Flush();
     }
 
+    // the seafront from where you start: the sea and beach, along the promenade, the palm median
+    IEnumerator SeafrontShots()
+    {
+        var wet = GameObject.Find("Beach wet");
+        if (wet)
+        {
+            var mf = wet.GetComponent<MeshFilter>(); Vector3 best = Vector3.zero; float bd = 1e9f;
+            foreach (var v in mf.sharedMesh.vertices) { var w = wet.transform.TransformPoint(v); float d = Vector3.Distance(w, player.transform.position); if (d < bd) { bd = d; best = w; } }
+            LookAt(best + Vector3.down * 0.5f);
+            yield return new WaitForSeconds(0.6f);
+            yield return Shot("seafront_sea.png");
+            var to = best - player.transform.position; to.y = 0;
+            LookAt(player.transform.position + Quaternion.Euler(0, 70f, 0) * to.normalized * 40f + Vector3.up * 1.0f);
+            yield return new WaitForSeconds(0.6f);
+            yield return Shot("seafront_along.png");
+            LookAt(player.transform.position + Quaternion.Euler(0, -70f, 0) * to.normalized * 40f + Vector3.up * 1.0f);
+            yield return new WaitForSeconds(0.6f);
+            yield return Shot("seafront_along2.png");
+            log.WriteLine($"seafront: beach water edge {bd:F0} m from the start");
+            // down on the sand, looking along the shore
+            var dry = GameObject.Find("Beach dry");
+            if (dry)
+            {
+                Vector3 sand = Vector3.zero; float sd = 1e9f;
+                foreach (var v in dry.GetComponent<MeshFilter>().sharedMesh.vertices) { var w = dry.transform.TransformPoint(v); float d = Vector3.Distance(w, best); if (d < sd && w.y > 0.15f) { sd = d; sand = w; } }
+                var keep = player.transform.position; var cc = player.GetComponent<CharacterController>();
+                cc.enabled = false; player.transform.position = sand + Vector3.up * 0.1f; cc.enabled = true;
+                yield return new WaitForSeconds(0.4f);
+                var along = Vector3.Cross(Vector3.up, (best - sand).normalized);
+                LookAt(sand + along * 30f + (best - sand).normalized * 6f);
+                yield return new WaitForSeconds(0.6f);
+                yield return Shot("seafront_beach.png");
+                cc.enabled = false; player.transform.position = keep; cc.enabled = true;
+                yield return new WaitForSeconds(0.3f);
+            }
+        }
+        MeshRenderer median = null; float md = 1e9f;
+        foreach (var r in FindObjectsByType<MeshRenderer>(FindObjectsSortMode.None))
+            if (r.sharedMaterial && r.sharedMaterial.name.StartsWith("Seafront_MedianGrass")) { float d = Vector3.Distance(r.bounds.center, player.transform.position); if (d < md) { md = d; median = r; } }
+        var crowns = GameObject.Find("Palms");
+        if (crowns && crowns.transform.childCount > 0)
+        {
+            Transform near = null; float nd = 1e9f;
+            foreach (Transform c in crowns.transform) { float d = Vector3.Distance(c.position, player.transform.position); if (d > 6 && d < nd) { nd = d; near = c; } }
+            if (near) { LookAt(near.position - Vector3.up * 2f); yield return new WaitForSeconds(0.6f); yield return Shot("seafront_palm.png"); log.WriteLine($"palms {crowns.transform.childCount}, nearest {nd:F0} m"); }
+        }
+        if (median) log.WriteLine($"median nearest {md:F0} m");
+        log.Flush();
+    }
+
     IEnumerator Run()
     {
         yield return new WaitForSeconds(1.5f);
         var health = player.GetComponent<PlayerHealth>(); if (health) health.invulnerable = true;
+        yield return SeafrontShots();
         yield return Shooting();
         yield return Combat();
         yield return EnemyMovement();
+        yield return EnemyWatch();
+        cam.yaw = startYaw; cam.pitch = 8f;                                  // face the way we started
         yield return Shot("play_start.png");
         yield return Step("idle", Vector2.zero, 1f);
         yield return Step("walk", Vector2.up, 2f, walk: true);

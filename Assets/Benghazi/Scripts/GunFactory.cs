@@ -258,6 +258,7 @@ public static class GunFactory
         Prism(g, wood, P(0.238f, -0.002f, 0.43f, 0.004f, 0.43f, 0.052f, 0.238f, 0.054f), 0.054f, 0, "lower handguard");
         for (int i = 0; i < 2; i++) Box(g, wood, new Vector3(0, 0.058f, 0.27f + i * 0.12f), new Vector3(0.052f, 0.004f, 0.018f), default, "handguard cap");
         Tube(g, wood, 0, 0.077f, 0.245f, 0.405f, 0.0175f, "upper handguard");
+        Node(g, "GripL", new Vector3(-0.035f, -0.03f, 0.29f));                   // where the left wrist sits holding the handguard
         Tube(g, steel, 0, 0.077f, 0.405f, 0.47f, 0.0105f, "gas tube");
         Box(g, steel, new Vector3(0, 0.06f, 0.482f), new Vector3(0.026f, 0.05f, 0.03f), default, "gas block");
         Box(g, steel, new Vector3(0, 0.03f, 0.43f), new Vector3(0.05f, 0.014f, 0.012f), default, "handguard retainer");

@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 
 // AK-47, bolt-action sniper and combat knife.
 // Left mouse / RT = fire (knife: slash), right mouse / LT = aim (sniper: scope; knife: heavy stab),
@@ -183,11 +185,30 @@ public class WeaponController : MonoBehaviour
             if (!W.auto) fireHeld = false;
         }
 
+        AimFocus();
         if (Time.time > tracerOff) tracer.enabled = false;
         flash.intensity = Time.time < flashOff ? 6f : 0f;
         hitMarker -= Time.deltaTime;
     }
     bool pendingSlash;
+
+    // aiming down the sights: focus on what the cross-hair is on, the gun right in front of your eye goes soft
+    DepthOfField dof; float focusDist = 30f; bool dofSearched;
+    void AimFocus()
+    {
+        if (!dofSearched) { dofSearched = true; var vol = FindFirstObjectByType<Volume>(); if (vol && vol.profile) vol.profile.TryGet(out dof); }
+        if (dof == null) return;
+        bool on = camRig.firstPerson && aimT > 0.5f && !W.melee && !(W.scope && aimT > 0.88f);
+        if (on)
+        {
+            var ray = cam.ViewportPointToRay(new Vector3(0.5f, 0.5f));
+            float target = RayNotSelf(ray.origin, ray.direction, 300f, out var h) ? h.distance : 300f;
+            focusDist = Mathf.Lerp(focusDist, target, 1 - Mathf.Exp(-8 * Time.deltaTime));
+            dof.mode.Override(DepthOfFieldMode.Bokeh);
+            dof.focusDistance.Override(Mathf.Max(1f, focusDist));
+        }
+        else if (dof.mode.value != DepthOfFieldMode.Off) dof.mode.Override(DepthOfFieldMode.Off);
+    }
 
     void StartReload() { reloading = true; reloadEnd = Time.time + W.reloadTime; vm.Reload(current, W.reloadTime); }
 

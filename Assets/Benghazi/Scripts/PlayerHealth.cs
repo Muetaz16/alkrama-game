@@ -105,6 +105,17 @@ public class PlayerHealth : MonoBehaviour
         float red = Mathf.Max(hurtFlash * 0.8f, Dead ? 0.9f : low);
         if (red > 0.01f) { GUI.color = new Color(0.7f, 0.02f, 0.02f, red); GUI.DrawTexture(new Rect(0, 0, w, h), vignette); }
 
+        // where the shots come from: a red mark round the cross-hair, pointing at the shooter
+        if (hurtFlash > 0.05f && !Dead && cam && (hurtFrom - transform.position).sqrMagnitude > 1f)
+        {
+            var to = hurtFrom - cam.transform.position; to.y = 0; var fw = cam.transform.forward; fw.y = 0;
+            float ang = Vector3.SignedAngle(fw, to, Vector3.up);
+            var mtx = GUI.matrix; GUIUtility.RotateAroundPivot(ang, new Vector2(w / 2, h / 2));
+            GUI.color = new Color(1f, 0.15f, 0.1f, Mathf.Clamp01(hurtFlash * 1.6f));
+            GUI.DrawTexture(new Rect(w / 2 - 45, h / 2 - h * 0.2f, 90, 9), white);
+            GUI.DrawTexture(new Rect(w / 2 - 22, h / 2 - h * 0.2f - 7, 44, 7), white);
+            GUI.matrix = mtx;
+        }
         var big = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(h * 0.03f), fontStyle = FontStyle.Bold, alignment = TextAnchor.UpperRight };
         var mid = new GUIStyle(big) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(h * 0.034f) };
         var small = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(h * 0.02f), fontStyle = FontStyle.Bold };

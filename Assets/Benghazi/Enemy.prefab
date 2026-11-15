@@ -74,9 +74,6 @@ MonoBehaviour:
   health: 100
   fallsOver: 1
   resetAfter: 3
-  sight: 75
-  hearing: 45
-  damage: 9
 --- !u!1001 &7241754288705692022
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -152,7 +149,7 @@ PrefabInstance:
     - target: {fileID: 5866666021909216657, guid: ed8840b78929a244b82b2e57d9f29649, type: 3}
       propertyPath: m_Controller
       value: 
-      objectReference: {fileID: 9100000, guid: 40ac2cfa2299b5649b12f2ebb4f5ad3d, type: 2}
+      objectReference: {fileID: 9100000, guid: 6bea2f8373189ea4d89b03cdb030588d, type: 2}
     - target: {fileID: 5866666021909216657, guid: ed8840b78929a244b82b2e57d9f29649, type: 3}
       propertyPath: m_ApplyRootMotion
       value: 0
