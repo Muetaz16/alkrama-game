@@ -28,6 +28,8 @@ public static class LookPro
 
     public static void Build()
     {
+        // the knife's mesh is read at run time to turn it the right way round
+        if (AssetImporter.GetAtPath("Assets/Resources/Guns/knife.fbx") is ModelImporter mi && !mi.isReadable) { mi.isReadable = true; mi.SaveAndReimport(); }
         Sky();
         Surfaces();
         Rocks();
@@ -114,7 +116,7 @@ public static class LookPro
     static void Surfaces()
     {
         int n = 0;
-        n += Apply("Asphalt", "worn_asphalt", new Color(0.92f, 0.9f, 0.88f));
+        n += Apply("Asphalt", "asphalt_02", new Color(0.4f, 0.4f, 0.42f));            // dark, almost black, as the road was
         n += Apply("Promenade", "precast_stone_paving", new Color(1.05f, 1.02f, 0.97f));
         n += Apply("SeaWall", "painted_plaster_wall", new Color(1.08f, 1.06f, 1.02f));
         n += Apply("Sand", "coast_sand_02", new Color(1.02f, 0.96f, 0.86f));

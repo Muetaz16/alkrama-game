@@ -507,7 +507,7 @@ public class WeaponController : MonoBehaviour
             GUI.color = new Color(1, 0.2f, 0.15f, 0.9f); GUI.DrawTexture(new Rect(cx - 1.5f, cy - 1.5f, 3, 3), white);
             GUI.color = Color.black; GUI.DrawTexture(new Rect(0, 0, w, cy - r + 2), white); GUI.DrawTexture(new Rect(0, cy + r - 2, w, h - cy - r + 2), white);
         }
-        else if (Aiming && !W.melee && camRig.firstPerson && aimT > 0.85f)
+        else if (Aiming && !W.melee && camRig.firstPerson && aimT > 0.85f && !(current == 0 && GunFactory.RealAK))
         {
             // the red dot, projected at infinity in the middle of the sight
             GUI.color = new Color(1f, 0.15f, 0.1f, 0.35f); GUI.DrawTexture(new Rect(cx - 4, cy - 4, 8, 8), dotTex);

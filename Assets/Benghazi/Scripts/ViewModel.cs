@@ -23,6 +23,8 @@ public class ViewModel : MonoBehaviour
     static readonly Vector3[] HipPos = { new(0.13f, -0.19f, 0.34f), new(0.14f, -0.195f, 0.33f), new(0.135f, -0.135f, 0.27f) };
     static readonly Vector3[] HipRot = { new(1f, -1.5f, 2f), new(1f, -1.5f, 2f), new(-28f, -14f, -22f) };
     static readonly float[] AdsDist = { 0.27f, 0.05f, 0f };
+    float AdsDistance(int w) => w == AK && GunFactory.RealAK ? 0.21f : AdsDist[w];      // iron sights sit closer to the eye than a red dot
+    Vector3 Hip(int w) => w == AK && GunFactory.RealAK ? new Vector3(0.14f, -0.2f, 0.47f) : HipPos[w];   // the real AK's stock is long: hold it further out
 
     public int Shown { get; private set; }
     public float aimT;                       // 0 hip .. 1 aiming, set by the weapon
@@ -192,8 +194,8 @@ public class ViewModel : MonoBehaviour
         float free = 1 - a;
 
         // hip <-> aim down sights
-        var adsPos = w == Knife ? HipPos[w] : new Vector3(0, 0, AdsDist[w]) - sight[w];
-        var pos = Vector3.Lerp(HipPos[w], adsPos, a);
+        var adsPos = w == Knife ? HipPos[w] : new Vector3(0, 0, AdsDistance(w)) - sight[w];
+        var pos = Vector3.Lerp(Hip(w), adsPos, a);
         var rot = Vector3.Lerp(HipRot[w], Vector3.zero, a);
 
         // breathing

@@ -1,0 +1,13 @@
+Weapon models (all CC0 / public domain, no attribution required - credited anyway)
+
+gun_ak.glb    "High-poly AK-47" by Lamoot, OpenGameArt.org
+              https://opengameart.org/content/high-poly-ak-47
+              (split into steel / wood / bakelite / magazine / charging handle, smoothed, scaled to metres)
+
+gun_vss.glb   "Soviet Special Sniper Rifle 3D" (VSS Vintorez), OpenGameArt.org
+              https://opengameart.org/content/soviet-special-sniper-rifle-3d
+
+knife.fbx     "Kabar Combat knife" by gamekorp, OpenGameArt.org
+knife_skin.jpg https://opengameart.org/content/kabar-combat-knife
+
+Sky, textures and the breakwater boulder: Poly Haven (CC0), https://polyhaven.com

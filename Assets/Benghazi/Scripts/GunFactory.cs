@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 // Detailed weapon models built from code (no downloads): AK-47 with a red-dot sight, a bolt-action
@@ -232,9 +233,33 @@ public static class GunFactory
     static Vector2[] P(params float[] zy) { var r = new Vector2[zy.Length / 2]; for (int i = 0; i < r.Length; i++) r[i] = new Vector2(zy[2 * i], zy[2 * i + 1]); return r; }
 
     // ---------- AK-47 (AKM) with a side-mounted red dot ----------
+    // ---------- real models (Resources/Guns, CC0: AK-47 by Lamoot, VSS by OpenGameArt, KA-BAR knife by gamekorp) ----------
+    public static bool RealAK { get; private set; }
+    static Material bakeliteMag;
+    static Transform Real(Transform parent, string res, string name)
+    {
+        var src = Resources.Load<GameObject>(res); if (!src) return null;
+        var inst = Object.Instantiate(src, parent, false); inst.name = name;
+        inst.transform.localPosition = Vector3.zero; inst.transform.localRotation = Quaternion.identity; inst.transform.localScale = Vector3.one;
+        if (!bakeliteMag) bakeliteMag = Lit(new Color(0.55f, 0.2f, 0.07f), 0f, 0.42f, Noise(128, 0.08f, 6), "BakeliteMag");
+        foreach (var r in inst.GetComponentsInChildren<MeshRenderer>(true))
+        {
+            var mats = r.sharedMaterials;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                string n = mats[i] ? mats[i].name.ToLower() : "";
+                mats[i] = n.StartsWith("wood") ? wood : n.StartsWith("bakelite_mag") ? bakeliteMag : n.StartsWith("bakelite") ? bakelite : n.StartsWith("black") ? polymer : steel;
+            }
+            r.sharedMaterials = mats; r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        }
+        return inst.transform;
+    }
+
     public static Transform AK(Transform parent, bool redDot = true)
     {
         Init();
+        var real = Real(parent, "Guns/gun_ak", "AK-47");
+        if (real) { RealAK = true; return real; }
         var g = Node(parent, "AK-47", Vector3.zero);
         // receiver with the rounded dust cover, trunnions, rivets
         Box(g, steel, new Vector3(0, 0.031f, 0.035f), new Vector3(0.046f, 0.062f, 0.33f), default, "receiver");
@@ -310,6 +335,8 @@ public static class GunFactory
     public static Transform Sniper(Transform parent)
     {
         Init();
+        var real = Real(parent, "Guns/gun_vss", "Sniper");
+        if (real) return real;
         var g = Node(parent, "Sniper", Vector3.zero);
         // synthetic stock with pistol grip, cheek rest and recoil pad
         Prism(g, olive, P(0.44f, 0.024f, 0.1f, 0.02f, -0.1f, 0.02f, -0.17f, 0.034f, -0.26f, 0.052f, -0.58f, 0.05f, -0.635f, 0.047f,
@@ -368,6 +395,8 @@ public static class GunFactory
     public static Transform Knife(Transform parent)
     {
         Init();
+        var real = RealKnife(parent);
+        if (real) return real;
         var g = Node(parent, "Knife", Vector3.zero);
         // blade: satin body, bright sharpened edge, dark fuller, clip point
         Prism(g, blade, P(0.058f, 0.013f, 0.17f, 0.013f, 0.2f, 0.006f, 0.232f, -0.002f, 0.205f, -0.009f, 0.17f, -0.0125f, 0.058f, -0.0125f), 0.0045f, 0, "blade", 20f);
@@ -382,6 +411,49 @@ public static class GunFactory
         Node(g, "Muzzle", new Vector3(0, 0, 0.23f));
         return g;
     }
+
+    // the KA-BAR model: turned so the blade points +z with the edge down, 30 cm long, grip in the middle of the handle
+    static Transform RealKnife(Transform parent)
+    {
+        var src = Resources.Load<GameObject>("Guns/knife"); if (!src) return null;
+        var mf = src.GetComponentInChildren<MeshFilter>(); if (!mf || !mf.sharedMesh) return null;
+        var m = mf.sharedMesh; var v = m.vertices;
+        var meshToSrc = src.transform.worldToLocalMatrix * mf.transform.localToWorldMatrix;
+        for (int i = 0; i < v.Length; i++) v[i] = meshToSrc.MultiplyPoint3x4(v[i]);
+        var b = new Bounds(v[0], Vector3.zero); foreach (var p in v) b.Encapsulate(p);
+        // axes: longest = along the knife, smallest = blade thickness, the other = blade height
+        var size = b.size; int L = size.x >= size.y && size.x >= size.z ? 0 : size.y >= size.z ? 1 : 2;
+        int T = Enumerable3(size).Where(i => i != L).OrderBy(i => size[i]).First(); int Hh = 3 - L - T;
+        // which end is the blade: the thinner one
+        float lo = b.min[L], hi = b.max[L], len = hi - lo;
+        float ThickNear(float a, float c) { float mn = 1e9f, mx = -1e9f; foreach (var p in v) if (p[L] >= a && p[L] <= c) { mn = Mathf.Min(mn, p[T]); mx = Mathf.Max(mx, p[T]); } return mx - mn; }
+        bool bladeHigh = ThickNear(hi - len * 0.25f, hi) < ThickNear(lo, lo + len * 0.25f);
+        // handle axis vs blade: the blade sits on the edge side of the handle line
+        float handleMid = 0, bladeMid = 0; int hn = 0, bn = 0;
+        foreach (var p in v)
+        {
+            float u = (p[L] - lo) / len; if (bladeHigh) u = 1 - u;          // u = 0 at the tip end
+            if (u > 0.8f) { handleMid += p[Hh]; hn++; } else if (u > 0.3f && u < 0.6f) { bladeMid += p[Hh]; bn++; }
+        }
+        handleMid /= Mathf.Max(1, hn); bladeMid /= Mathf.Max(1, bn);
+        bool edgeHigh = bladeMid > handleMid;                                // edge on the +H side
+        // rotation that maps (blade dir, edge-down dir, thickness) onto (+z, -y, x)
+        var fwd = Vector3.zero; fwd[L] = bladeHigh ? 1 : -1;
+        var down = Vector3.zero; down[Hh] = edgeHigh ? 1 : -1;
+        var rot = Quaternion.Inverse(Quaternion.LookRotation(fwd, -down));
+        float scale = 0.3f / len;
+        var gripCentre = b.center; gripCentre[L] = bladeHigh ? lo + len * 0.17f : hi - len * 0.17f; gripCentre[Hh] = handleMid;
+        var holder = new GameObject("Knife").transform; holder.SetParent(parent, false);
+        var inst = Object.Instantiate(src, holder, false); inst.name = "model";
+        inst.transform.localRotation = rot; inst.transform.localScale = Vector3.one * scale;
+        inst.transform.localPosition = -(rot * (gripCentre * scale));
+        var tex = Resources.Load<Texture2D>("Guns/knife_skin");
+        var mat = Lit(Color.white, 0.6f, 0.55f, tex, "KnifeSkin");
+        foreach (var r in inst.GetComponentsInChildren<Renderer>(true)) { r.sharedMaterial = mat; r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; }
+        Node(holder, "Muzzle", new Vector3(0, 0, 0.23f));
+        return holder;
+    }
+    static System.Collections.Generic.IEnumerable<int> Enumerable3(Vector3 _) { yield return 0; yield return 1; yield return 2; }
 
     // a fired case for the ejection
     public static GameObject Shell(bool big)
