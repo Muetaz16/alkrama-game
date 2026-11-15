@@ -103,8 +103,8 @@ public static class Seafront
     }
 
     // ---------- beach ----------
-    static readonly float[] DryOff = { 0.1f, -3f, -7f }, DryY = { 0.38f, 0.22f, 0.03f };
-    static readonly float[] WetOff = { -7f, -11f, -16.5f }, WetY = { 0.03f, -0.36f, -1.0f };
+    static readonly float[] DryOff = { 0.1f, -3f, -8f, -13f, -17f }, DryY = { 0.38f, 0.3f, 0.22f, 0.12f, 0.04f };
+    static readonly float[] WetOff = { -17f, -21f, -26f, -32f, -40f }, WetY = { 0.04f, -0.14f, -0.42f, -0.85f, -1.6f };
 
     static int Beach(Dictionary<string, object> map, float half, Transform root)
     {
@@ -121,7 +121,11 @@ public static class Seafront
                 for (int i = 0; i < run.Count; i++)
                     for (int k = 0; k < rows; k++)
                     {
-                        var p = run[i] + n[i] * offs[k];
+                        // the beach is wider in places and narrower in others (rows past the wall foot stretch)
+                        float along = i * 2f;
+                        float width = 0.75f + 0.55f * Mathf.PerlinNoise(along * 0.018f + 3.1f, 0.5f);
+                        float o = offs[k] < -0.5f ? -0.5f + (offs[k] + 0.5f) * width : offs[k];
+                        var p = run[i] + n[i] * o;
                         float dune = Mathf.PerlinNoise(p.x * 0.21f, p.z * 0.21f) * 0.12f - 0.06f;
                         p.y = ys[k] + (k == 0 && mat == dry ? 0 : dune);
                         v.Add(p); uv.Add(new Vector2(p.x, p.z) * 0.22f);
@@ -312,6 +316,11 @@ public static class Seafront
     static int Palms(List<(Vector3 pos, float h, int kind)> spots, Transform root)
     {
         var bark = Mat("PalmBark", tex: "Bark", c: Color.white, smooth: 0.08f);
+        var barkN = AssetDatabase.LoadAssetAtPath<Texture2D>($"{Gen}/BarkNormal.png");
+        if (barkN) { bark.SetTexture("_BumpMap", barkN); bark.SetFloat("_BumpScale", 1.4f); bark.EnableKeyword("_NORMALMAP"); }
+        var dates = Mat("Dates", c: new Color(0.85f, 0.45f, 0.1f), smooth: 0.45f);
+        var stalk = Mat("DateStalk", c: new Color(0.75f, 0.55f, 0.2f), smooth: 0.2f);
+        var collar = Collar(); Save(collar);
         var frond = new[] { FrondMat("PalmFrondGreen", "FrondGreen"), FrondMat("PalmFrondDry", "FrondDry"), FrondMat("PalmFrondBurnt", "FrondBurnt") };
         var boot = Mat("PalmBoot", tex: "Bark", c: new Color(0.55f, 0.42f, 0.3f), smooth: 0.05f);
         crownMeshes = new Mesh[3][];
@@ -326,7 +335,17 @@ public static class Seafront
             var m = Matrix4x4.TRS(pos, Quaternion.Euler(0, dir, 0), Vector3.one);
             Add(trunk, m, bark, true);
             var top = pos + Quaternion.Euler(0, dir, 0) * TopOffset(h, lean);
-            Sphere(top + Vector3.down * 0.15f, new Vector3(0.55f, 0.7f, 0.55f), Quaternion.identity, boot);
+            Sphere(top + Vector3.down * 0.15f, new Vector3(0.62f, 0.8f, 0.62f), Quaternion.identity, boot);
+            Add(collar, Matrix4x4.TRS(top + Vector3.down * 0.25f, Quaternion.Euler(0, R(0, 360), 0), Vector3.one), frond[1], false);
+            // hanging bunches of dates on some of the green palms
+            if (kind == 0 && R() < 0.4f)
+                for (int d = 0, nd = rnd.Next(2, 5); d < nd; d++)
+                {
+                    var dir2 = Quaternion.Euler(0, R(0, 360), 0) * Vector3.forward;
+                    var at = top + dir2 * 0.45f + Vector3.down * 0.55f;
+                    Box(at + Vector3.up * 0.25f, new Vector3(0.04f, 0.6f, 0.04f), Quaternion.LookRotation(dir2) * Quaternion.Euler(25, 0, 0), stalk);
+                    for (int k = 0; k < 7; k++) Sphere(at + new Vector3(R(-0.16f, 0.16f), R(-0.35f, 0.05f), R(-0.16f, 0.16f)), Vector3.one * R(0.13f, 0.2f), Quaternion.identity, dates);
+                }
             // crown: own object so it can sway
             var cg = new GameObject("Palm crown"); cg.transform.SetParent(holder, false);
             cg.transform.SetPositionAndRotation(top, Quaternion.Euler(R(-4, 4), R(0, 360), R(-4, 4)));
@@ -352,7 +371,7 @@ public static class Seafront
         for (int k = 0; k <= rings; k++)
         {
             float u = k / (float)rings;
-            float r = Mathf.Lerp(0.26f, 0.17f, u) + (u < 0.06f ? (0.06f - u) * 2.2f : 0);   // flared foot
+            float r = Mathf.Lerp(0.3f, 0.22f, u) + (u < 0.06f ? (0.06f - u) * 2.4f : 0) + (u > 0.93f ? (u - 0.93f) * 1.6f : 0);   // flared foot, crown shaft
             var c = new Vector3(0, u * h, 0) + Vector3.forward * Mathf.Tan(lean * Mathf.Deg2Rad) * h * 0.7f * u * u;
             for (int i = 0; i <= seg; i++)
             {
@@ -384,9 +403,10 @@ public static class Seafront
             float u = i / (float)seg;
             float wd = width * Mathf.Sin(Mathf.Min(1, u * 1.15f + 0.05f) * Mathf.PI) * (1 - u * 0.35f);
             var up = Vector3.Cross(side, tan).normalized;
-            v.Add(p - side * wd + up * wd * 0.18f); uv.Add(new Vector2(0, u));
+            var sd = Quaternion.AngleAxis(u * 28f, tan) * side;                      // the frond twists as it goes out
+            v.Add(p - sd * wd + up * wd * 0.42f); uv.Add(new Vector2(0, u));
             v.Add(p + up * 0.02f); uv.Add(new Vector2(0.5f, u));
-            v.Add(p + side * wd + up * wd * 0.18f); uv.Add(new Vector2(1, u));
+            v.Add(p + sd * wd + up * wd * 0.42f); uv.Add(new Vector2(1, u));
             nrm.Add(up); nrm.Add(up); nrm.Add(up);
             // gravity bends the frond down more and more towards the tip
             tan = Quaternion.AngleAxis(droop * (0.4f + u) * 1.1f, side) * tan;
@@ -405,16 +425,27 @@ public static class Seafront
         var r2 = new System.Random(100 + kind * 10 + variant);
         float Rr(float a, float b) => a + (b - a) * (float)r2.NextDouble();
         var v = new List<Vector3>(); var uv = new List<Vector2>(); var n = new List<Vector3>(); var t = new List<int>();
-        int count = kind == 2 ? 11 : kind == 1 ? 16 : 22;
+        int count = kind == 2 ? 12 : kind == 1 ? 22 : 34;
         for (int i = 0; i < count; i++)
         {
-            float tier = (i % 3) / 2f;                                                 // top, middle, low
-            float elev = Mathf.Lerp(62f, -8f, tier) + Rr(-10, 10);
-            float len = Rr(3.0f, 4.2f) * (kind == 2 ? 0.7f : 1f) * (1 - tier * 0.1f);
-            Frond(v, uv, n, t, i * (360f / count) * 1.618f + Rr(-12, 12), elev, len, Rr(0.42f, 0.6f), Rr(6f, 10f) + tier * 5f);
+            // phyllotaxis spiral; four tiers from young upright spears to old fronds hanging below the horizon
+            float tier = (i % 4) / 3f;
+            float elev = Mathf.Lerp(74f, -22f, tier) + Rr(-8, 8);
+            float len = Rr(3.4f, 4.6f) * (kind == 2 ? 0.65f : 1f) * (1 - tier * 0.12f) * (tier < 0.1f ? 0.8f : 1f);
+            float droop = Rr(5f, 8f) + tier * 9f;
+            Frond(v, uv, n, t, i * 137.5f + Rr(-8, 8), elev, len, Rr(0.5f, 0.72f) * (tier < 0.1f ? 0.6f : 1f), droop);
         }
         var m = new Mesh { name = $"PalmCrown_{kind}_{variant}" };
         m.SetVertices(v); m.SetUVs(0, uv); m.SetNormals(n); m.SetTriangles(t, 0); m.RecalculateBounds(); m.RecalculateTangents();
+        return m;
+    }
+
+    // fibrous collar of old leaf stubs right under the crown
+    static Mesh Collar()
+    {
+        var v = new List<Vector3>(); var uv = new List<Vector2>(); var n = new List<Vector3>(); var t = new List<int>();
+        for (int i = 0; i < 18; i++) Frond(v, uv, n, t, i * 20f, (i % 2 == 0 ? 25f : 50f), 0.55f, 0.11f, 2f);
+        var m = new Mesh { name = "PalmCollar" }; m.SetVertices(v); m.SetUVs(0, uv); m.SetNormals(n); m.SetTriangles(t, 0); m.RecalculateBounds(); m.RecalculateTangents();
         return m;
     }
 
@@ -519,16 +550,22 @@ public static class Seafront
 
     static void Textures()
     {
-        Write("Bark", 128, 256, (x, y) =>
+        // overlapping leaf-base scars: each a rounded knob, rows offset, darker fibrous grooves between
+        float BarkH(int x, int y)
         {
-            // overlapping leaf-base scars in a diamond pattern, darker in the grooves
-            float u = x / 128f, v = y / 256f;
-            float d1 = Mathf.Abs(Mathf.Repeat(u * 4 + v * 8, 1) - 0.5f), d2 = Mathf.Abs(Mathf.Repeat(u * 4 - v * 8, 1) - 0.5f);
-            float groove = Mathf.Clamp01(Mathf.Min(d1, d2) * 6);
-            float n = Noise(x, y, 6, 3) * 0.25f + Noise(x, y, 20, 4) * 0.2f;
-            var c = Color.Lerp(new Color(0.22f, 0.17f, 0.12f), new Color(0.58f, 0.48f, 0.36f), groove * 0.8f + n);
-            return c;
+            float u = x / 256f * 6f, v = y / 512f * 12f;
+            float row = Mathf.Floor(v); float uu = u + (row % 2) * 0.5f;
+            float fx = Mathf.Repeat(uu, 1f) - 0.5f, fy = Mathf.Repeat(v, 1f) - 0.5f;
+            float knob = Mathf.Clamp01(1 - (fx * fx * 3.2f + fy * fy * 5f) * 2.6f);
+            return knob * 0.8f + Noise(x, y, 5, 3) * 0.12f + Noise(x, y, 2, 13) * 0.08f;
+        }
+        Write("Bark", 256, 512, (x, y) =>
+        {
+            float hgt = BarkH(x, y);
+            float n = Noise(x, y, 14, 4) * 0.2f;
+            return Color.Lerp(new Color(0.2f, 0.16f, 0.12f), new Color(0.6f, 0.52f, 0.42f), Mathf.Clamp01(hgt * 0.85f + n));
         }, true);
+        WriteNormal("BarkNormal", 256, 512, BarkH, 3.5f);
         Write("Grass", 128, 128, (x, y) =>
         {
             float n = Noise(x, y, 8, 5) * 0.6f + Noise(x, y, 2, 6) * 0.4f;
@@ -549,6 +586,23 @@ public static class Seafront
         float H(int a, int b) { uint h = (uint)(a * 374761393 + b * 668265263 + seed * 2246822519); h = (h ^ (h >> 13)) * 1274126177; return (h & 0xffff) / 65535f; }
         float sx = fx - ix, sy = fy - iy; sx = sx * sx * (3 - 2 * sx); sy = sy * sy * (3 - 2 * sy);
         return Mathf.Lerp(Mathf.Lerp(H(ix, iy), H(ix + 1, iy), sx), Mathf.Lerp(H(ix, iy + 1), H(ix + 1, iy + 1), sx), sy);
+    }
+
+    static void WriteNormal(string name, int w, int h, System.Func<int, int, float> height, float strength)
+    {
+        var tex = new Texture2D(w, h, TextureFormat.RGBA32, false, true);
+        for (int y = 0; y < h; y++) for (int x = 0; x < w; x++)
+        {
+            float dx = height((x + 1) % w, y) - height((x + w - 1) % w, y), dy = height(x, (y + 1) % h) - height(x, (y + h - 1) % h);
+            var nn = new Vector3(-dx * strength, -dy * strength, 1).normalized;
+            tex.SetPixel(x, y, new Color(nn.x * 0.5f + 0.5f, nn.y * 0.5f + 0.5f, nn.z * 0.5f + 0.5f, 1));
+        }
+        tex.Apply();
+        var path = $"{Gen}/{name}.png";
+        File.WriteAllBytes(path, tex.EncodeToPNG());
+        AssetDatabase.ImportAsset(path);
+        var ti = (TextureImporter)AssetImporter.GetAtPath(path);
+        ti.textureType = TextureImporterType.NormalMap; ti.wrapMode = TextureWrapMode.Repeat; ti.mipmapEnabled = true; ti.SaveAndReimport();
     }
 
     static void Write(string name, int w, int h, System.Func<int, int, Color> f, bool wrap)

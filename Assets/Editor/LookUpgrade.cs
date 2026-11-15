@@ -22,6 +22,7 @@ public static class LookUpgrade
         var scene = EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
         Seafront.Build();
         CityDetail.Build();
+        LookPro.Build();
         GameplaySetup.Run();
         EditorSceneManager.SaveScene(scene);
     }
@@ -66,9 +67,9 @@ public static class LookUpgrade
             ti.SaveAndReimport();
         }
         WritePng(Gen + "/WaveNormal.png", WaveNormal(512), true);
-        WritePng(Gen + "/FrondGreen.png", Frond(256, 1024, new Color(0.20f, 0.32f, 0.10f), new Color(0.38f, 0.50f, 0.18f), 0.05f, 1), false);
-        WritePng(Gen + "/FrondDry.png", Frond(256, 1024, new Color(0.30f, 0.22f, 0.12f), new Color(0.46f, 0.35f, 0.19f), 0.3f, 2), false);
-        WritePng(Gen + "/FrondBurnt.png", Frond(256, 1024, new Color(0.13f, 0.10f, 0.07f), new Color(0.30f, 0.23f, 0.14f), 0.4f, 3), false);
+        WritePng(Gen + "/FrondGreen.png", Frond(512, 2048, new Color(0.17f, 0.29f, 0.09f), new Color(0.40f, 0.52f, 0.20f), 0.04f, 1), false);
+        WritePng(Gen + "/FrondDry.png", Frond(512, 2048, new Color(0.32f, 0.24f, 0.13f), new Color(0.55f, 0.43f, 0.24f), 0.3f, 2), false);
+        WritePng(Gen + "/FrondBurnt.png", Frond(512, 2048, new Color(0.13f, 0.10f, 0.07f), new Color(0.30f, 0.23f, 0.14f), 0.4f, 3), false);
     }
 
     static void WritePng(string path, Texture2D tex, bool normal)
@@ -120,7 +121,7 @@ public static class LookUpgrade
         var tex = new Texture2D(w, h, TextureFormat.RGBA32, true);
         var px = new Color[w * h];
         for (int i = 0; i < px.Length; i++) px[i] = new Color(dark.r, dark.g, dark.b, 0);
-        int count = 36;
+        int count = 68;
         for (int k = 0; k < count; k++)
         {
             float v0 = 0.04f + k / (float)count * 0.92f;
@@ -128,13 +129,14 @@ public static class LookUpgrade
             foreach (int side in new[] { -1, 1 })
             {
                 if (rnd.NextDouble() < ragged * 0.6) continue;                         // missing leaflet
-                float len = (0.47f * lenScale) * (1 - (float)rnd.NextDouble() * ragged * 0.6f);
+                float len = (0.48f * lenScale) * (1 - (float)rnd.NextDouble() * ragged * 0.6f);
                 var shade = Color.Lerp(dark, light, (float)rnd.NextDouble());
+                if (rnd.NextDouble() < 0.12) shade = Color.Lerp(shade, new Color(0.62f, 0.55f, 0.3f), 0.5f);   // the odd yellowing leaflet
                 for (float s = 0; s < len; s += 0.6f / w)
                 {
                     float u = 0.5f + side * s;
-                    float v = v0 + s * 0.45f;                                             // leaflets sweep toward the tip
-                    float width = 0.006f * (1 - s / len * 0.75f);
+                    float v = v0 + s * 0.38f;                                             // leaflets sweep toward the tip
+                    float width = 0.0042f * (1 - s / len * 0.8f);
                     int cx = Mathf.RoundToInt(u * w), cy = Mathf.RoundToInt(v * h);
                     int r = Mathf.Max(1, Mathf.RoundToInt(width * h));
                     for (int dy = -r; dy <= r; dy++)
@@ -149,7 +151,7 @@ public static class LookUpgrade
             }
         }
         // midrib
-        for (int y = 0; y < h; y++) for (int x = w / 2 - 2; x <= w / 2 + 2; x++) px[y * w + x] = Color.Lerp(light, dark, 0.3f) * new Color(1.1f, 1.05f, 0.9f, 1);
+        for (int y = 0; y < h; y++) for (int x = w / 2 - 3; x <= w / 2 + 3; x++) px[y * w + x] = Color.Lerp(light, new Color(0.62f, 0.55f, 0.35f), 0.55f);
         tex.SetPixels(px); tex.Apply();
         return tex;
     }
