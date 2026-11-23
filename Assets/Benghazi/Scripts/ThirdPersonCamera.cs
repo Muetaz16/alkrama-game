@@ -19,7 +19,7 @@ public class ThirdPersonCamera : MonoBehaviour
     [HideInInspector] public float baseFov = 65f;
     public bool firstPerson = true;              // Call of Duty view: only the gun; V switches to over-the-shoulder
     public float eyeHeight = 1.62f, crouchEye = 1.08f;
-    float sprintFov, roll, startLean, eye = 1.62f;
+    float sprintFov, roll, startLean, eye = 1.62f, leanOff, leanRoll, turnRoll;
 
     void Start()
     {
@@ -60,12 +60,21 @@ public class ThirdPersonCamera : MonoBehaviour
         if (cam && !aimingFov) cam.fieldOfView = baseFov + sprintFov;
         roll = Mathf.Lerp(roll, -target.Strafe * 2.2f, 1 - Mathf.Exp(-6 * dt));
         startLean = Mathf.Lerp(startLean, Mathf.Clamp(target.AccelForward * 0.12f, -2.5f, 2.5f), 1 - Mathf.Exp(-8 * dt));
-        var rot = Quaternion.Euler(pitch + startLean, yaw, roll);
+        // a fighter's head: tilts with the lean, and a little into fast turns (the body leads the turn)
+        leanRoll = Mathf.Lerp(leanRoll, -target.Lean * 11f, 1 - Mathf.Exp(-12 * dt));
+        turnRoll = Mathf.Lerp(turnRoll, firstPerson && !aimingFov ? -Mathf.Clamp(d.x / Mathf.Max(dt, 1e-4f) * 0.008f, -2.5f, 2.5f) : 0f, 1 - Mathf.Exp(-6 * dt));
+        var rot = Quaternion.Euler(pitch + startLean, yaw, roll + leanRoll + turnRoll);
         if (firstPerson)
         {
             // eyes of the soldier: lower when crouched, a light bob (the gun does most of the moving)
             eye = Mathf.Lerp(eye, target.crouch ? crouchEye : eyeHeight, 1 - Mathf.Exp(-10 * dt));
             var eyePos = target.transform.position + Vector3.up * (eye + target.LandDip * 0.6f) + Quaternion.Euler(0, yaw, 0) * (new Vector3(0, 0, 0.1f) + bob * 0.55f);
+            // leaning: head out to the side, never through the wall
+            var side = Quaternion.Euler(0, yaw, 0) * Vector3.right; float leanWant = target.Lean * 0.34f;
+            if (Mathf.Abs(leanWant) > 0.01f && Physics.SphereCast(eyePos, 0.13f, side * Mathf.Sign(leanWant), out var lh, Mathf.Abs(leanWant), collideWith, QueryTriggerInteraction.Ignore)
+                && !lh.collider.transform.IsChildOf(target.transform)) leanWant = Mathf.Sign(leanWant) * Mathf.Max(0, lh.distance - 0.03f);
+            leanOff = Mathf.Lerp(leanOff, leanWant, 1 - Mathf.Exp(-14 * dt));
+            eyePos += side * leanOff + Vector3.down * Mathf.Abs(leanOff) * 0.18f;
             transform.SetPositionAndRotation(eyePos, rot);
             if (cam) cam.nearClipPlane = 0.02f;
             return;

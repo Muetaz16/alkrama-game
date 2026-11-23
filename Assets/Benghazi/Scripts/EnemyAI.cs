@@ -132,7 +132,7 @@ public class EnemyAI : Damageable
 
     // ---------- senses ----------
     Vector3 Eye => transform.position + Vector3.up * (1.6f - 0.55f * crouchT);
-    Vector3 PlayerTarget => player.position + Vector3.up * (pc && pc.crouch ? 0.95f : 1.4f);
+    Vector3 PlayerTarget => player.position + Vector3.up * (pc && pc.crouch ? 0.95f : 1.4f) + (pc ? player.right * pc.Lean * 0.3f : Vector3.zero);
 
     bool FirstHit(Vector3 a, Vector3 b, out RaycastHit first, bool skipPlayer)
     {

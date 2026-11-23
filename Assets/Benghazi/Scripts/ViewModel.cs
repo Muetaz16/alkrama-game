@@ -37,7 +37,8 @@ public class ViewModel : MonoBehaviour
 
     // springs and smoothed states
     Vector3 recP, recPV, recR, recRV, swayR, swayP;
-    float sprintT, crouchT, airT, block, lastYaw, lastPitch, time, scopeHide;
+    float sprintT, crouchT, airT, block, lastYaw, lastPitch, time, scopeHide, lowT, closeT;
+    [HideInInspector] public float combatAt;          // last time there was a threat / shot / aim (set by the weapon)
     bool switching, raising; float switchStart; int switchTo;
 
     // key-frame animation: offsets of the gun (p, r) or of a part, over u = 0..1
@@ -64,10 +65,20 @@ public class ViewModel : MonoBehaviour
             if (mag[i]) magHome[i] = mag[i].localPosition;
             if (bolt[i]) boltHome[i] = bolt[i].localPosition;
             if (i != Knife) flash[i] = BuildFlash(muzzle[i]);
+            if (i != Knife && mag[i])
+            {
+                var b = MagBox(mag[i]);
+                magCentre[i] = b.center; magSize[i] = b.size;
+                magFront[i] = new Vector3(b.center.x, b.max.y, b.max.z); magRear[i] = new Vector3(b.center.x, b.max.y, b.min.z);
+                if (i == AK && GunFactory.RealAK) { magFront[i] = new Vector3(0, 0.032f, 0.205f); magRear[i] = new Vector3(0, 0.032f, 0.15f); magCentre[i] = new Vector3(0, -0.07f, 0.215f); }
+                spare[i] = Instantiate(mag[i].gameObject, mag[i].parent, false).transform; spare[i].name = "Spare mag";
+                spare[i].localPosition = magHome[i]; spare[i].localRotation = Quaternion.identity; spare[i].gameObject.SetActive(false);
+            }
             renderers[i] = model[i].GetComponentsInChildren<Renderer>(true);
             holder[i].gameObject.SetActive(i == AK);
         }
         lastYaw = rig.yaw; lastPitch = rig.pitch;
+        rockSign = (Quaternion.AngleAxis(10f, Vector3.right) * Vector3.down).z > 0 ? 1f : -1f;
     }
 
     public Vector3 MuzzlePos => muzzle[Shown] ? muzzle[Shown].position : cam.transform.position;
@@ -88,7 +99,138 @@ public class ViewModel : MonoBehaviour
     }
     float flashOff;
 
-    public void Reload(int w, float seconds) => Play(reloadAnim, w, seconds);
+    // ---------- magazine changes, the way special forces do them on an AK ----------
+    // Both: rifle into the "workspace" (high, close, rolled so the magwell faces the support hand; eyes
+    // stay up on the threat). The support hand brings the fresh mag from the pouch and uses it to push the
+    // paddle release, stripping the old mag out; the fresh mag goes in front lug first and is rocked back.
+    //   emergency (empty): the old mag drops to the ground; rifle rolled left, support hand racks the handle
+    //   tactical (rounds left): a round stays chambered; the old mag is kept in the hand and stowed
+    readonly Transform[] spare = new Transform[3];
+    readonly Vector3[] magFront = new Vector3[3], magRear = new Vector3[3], magCentre = new Vector3[3], magSize = new Vector3[3];
+    bool tacReload, dropped; int lhA, lhB; float lhK;
+    Vector3 spOff, oldOff; float spAng, oldAng;
+    static readonly Vector3 PouchCam = new(-0.12f, -0.46f, 0.12f);
+    static float rockSign;
+    public bool TacticalReload => tacReload;
+    public string ReloadDebug()
+    {
+        int w = Shown; var ct = cam.transform;
+        string P(Transform t) => t ? $"{t.name} on {t.gameObject.activeInHierarchy} cam-local {ct.InverseTransformPoint(t.position):F2} centre {ct.InverseTransformPoint(t.TransformPoint(magCentre[w] - magHome[w])):F2} parent {(t.parent ? t.parent.name : "-")}" : "none";
+        return $"u {(Playing(reloadAnim) ? U(reloadAnim) : -1):F2} home {magHome[w]:F3} centre {magCentre[w]:F3} front {magFront[w]:F3} size {magSize[w]:F3} | mag {P(mag[w])} | spare {P(spare[w])}";
+    }
+    public void Reload(int w, float seconds, bool tactical) { tacReload = tactical; dropped = false; Play(reloadAnim, w, seconds); }
+
+    static Bounds MagBox(Transform m)
+    {
+        var par = m.parent; bool any = false; var b = new Bounds();
+        foreach (var mf in m.GetComponentsInChildren<MeshFilter>(true))
+        {
+            if (!mf.sharedMesh) continue;
+            var mb = mf.sharedMesh.bounds; var M = par.worldToLocalMatrix * mf.transform.localToWorldMatrix;
+            for (int c = 0; c < 8; c++)
+            {
+                var p = M.MultiplyPoint3x4(new Vector3((c & 1) != 0 ? mb.max.x : mb.min.x, (c & 2) != 0 ? mb.max.y : mb.min.y, (c & 4) != 0 ? mb.max.z : mb.min.z));
+                if (!any) { b = new Bounds(p, Vector3.zero); any = true; } else b.Encapsulate(p);
+            }
+        }
+        return b;
+    }
+
+    // a mag's pose: rotated about the magwell's front lug by ang (bottom swinging forward), then offset
+    void PoseMag(Transform t, int w, float ang, Vector3 off)
+    {
+        var R = Quaternion.AngleAxis(ang * rockSign, Vector3.right);
+        var P = magFront[w];
+        t.localRotation = R; t.localPosition = P + R * (magHome[w] - P) + off;
+    }
+
+    static float Sm(float x, float a, float b) => Mathf.SmoothStep(0, 1, Mathf.InverseLerp(a, b, x));
+
+    void ReloadPose(int w, float u, float a, ref Vector3 pos, ref Vector3 rot)
+    {
+        bool tac = tacReload;
+        // rifle into the workspace
+        float work = Sm(u, 0f, 0.1f) * (1 - Sm(u, tac ? 0.66f : 0.82f, tac ? 0.86f : 0.98f));
+        pos += new Vector3(-0.04f, 0.035f, -0.09f) * work * (1 - a * 0.5f); rot += new Vector3(-8f, 6f, -24f) * work;     // magwell turned to the support hand
+        if (!tac)
+        {
+            // charging handle up for the support hand
+            float rk = Sm(u, 0.58f, 0.66f) * (1 - Sm(u, 0.8f, 0.9f));
+            rot += new Vector3(0, -10f, 58f) * rk; pos += new Vector3(0.02f, 0.01f, 0) * rk;      // rolled over: charging handle up
+        }
+        if (!mag[w] || !spare[w]) return;
+        var pouchL = mag[w].parent.InverseTransformPoint(cam.transform.TransformPoint(PouchCam));
+        Vector3 pouchOff = pouchL - magCentre[w];
+        // fresh mag: pouch -> behind the old one -> sweep forward on the paddle -> front lug in -> rocked home
+        spare[w].gameObject.SetActive(u >= 0.12f);
+        if (u < 0.3f) { float t = Sm(u, 0.12f, 0.3f); spOff = Vector3.Lerp(pouchOff, new Vector3(0, -0.055f, -0.04f), t); spAng = Mathf.Lerp(-15f, 0, t); }
+        else if (u < 0.38f) { float t = Sm(u, 0.3f, 0.38f); spOff = Vector3.Lerp(new Vector3(0, -0.055f, -0.04f), new Vector3(0, -0.04f, 0.025f), t); spAng = 0; }
+        else if (u < 0.46f) { float t = Sm(u, 0.38f, 0.46f); spOff = Vector3.Lerp(new Vector3(0, -0.04f, 0.025f), new Vector3(0, -0.012f, 0), t); spAng = 24f * t; }
+        else if (u < 0.54f) { float t = Sm(u, 0.46f, 0.54f); spOff = Vector3.Lerp(new Vector3(0, -0.012f, 0), Vector3.zero, t); spAng = 24f * (1 - t); }
+        else { spOff = Vector3.zero; spAng = 0; }
+        PoseMag(spare[w], w, spAng, spOff);
+        // old mag: stripped out by the fresh one; dropped (empty) or kept in the hand and stowed (tactical)
+        if (u < 0.3f) { oldOff = Vector3.zero; oldAng = 0; }
+        else if (u < 0.38f) { float t = Sm(u, 0.3f, 0.38f); oldOff = new Vector3(0, -0.03f, 0.01f) * t; oldAng = 24f * t; }
+        else if (!tac)
+        {
+            if (!dropped) { dropped = true; DropMag(w); }
+            mag[w].gameObject.SetActive(false);
+        }
+        else if (u < 0.54f) { oldOff = spOff + new Vector3(0, -0.04f, -0.07f); oldAng = spAng; }
+        else if (u < 0.72f) { float t = Sm(u, 0.54f, 0.72f); oldOff = Vector3.Lerp(new Vector3(0, -0.04f, -0.07f), pouchOff, t); oldAng = 0; }
+        else mag[w].gameObject.SetActive(false);
+        if (mag[w].gameObject.activeSelf) PoseMag(mag[w], w, oldAng, oldOff);
+        // charging handle (emergency)
+        if (bolt[w])
+        {
+            float back = tac ? 0 : Sm(u, 0.7f, 0.75f) * (1 - Sm(u, 0.76f, 0.8f));
+            bolt[w].localPosition = boltHome[w] + new Vector3(0, 0, -0.085f) * back;
+        }
+        // where the support hand is
+        if (u < 0.12f) { lhA = 0; lhB = 1; lhK = Sm(u, 0f, 0.12f); }
+        else if (u < 0.54f) { lhA = lhB = 2; lhK = 0; }
+        else if (tac)
+        {
+            if (u < 0.72f) { lhA = lhB = 3; lhK = 0; }
+            else { lhA = 1; lhB = 0; lhK = Sm(u, 0.72f, 0.86f); }
+        }
+        else
+        {
+            if (u < 0.66f) { lhA = 2; lhB = 4; lhK = Sm(u, 0.54f, 0.66f); }
+            else if (u < 0.8f) { lhA = lhB = 4; lhK = 0; }
+            else { lhA = 4; lhB = 0; lhK = Sm(u, 0.8f, 0.9f); }
+        }
+    }
+
+    Vector3 LeftTarget(int w, int kind, Vector3 grip)
+    {
+        switch (kind)
+        {
+            case 1: return cam.transform.TransformPoint(PouchCam);
+            // the hand holds a mag by its lower half, so the mag stands out of the fist
+            case 2: return spare[w] && spare[w].gameObject.activeSelf ? spare[w].TransformPoint(magCentre[w] - magHome[w] + new Vector3(0, -0.075f, 0)) : grip;
+            case 3: return mag[w] && mag[w].gameObject.activeSelf ? mag[w].TransformPoint(magCentre[w] - magHome[w] + new Vector3(0, -0.075f, 0)) : grip;
+            case 4: return (handle[w] ? handle[w] : bolt[w] ? bolt[w] : model[w]).position + model[w].right * 0.03f;
+            default: return grip;
+        }
+    }
+
+    // the empty mag falls to the ground and stays there a while
+    void DropMag(int w)
+    {
+        var m = mag[w];
+        var go = Instantiate(m.gameObject); go.name = "Dropped mag";
+        go.transform.SetPositionAndRotation(m.position, m.rotation); go.transform.localScale = m.lossyScale;
+        go.layer = 2;
+        foreach (var r in go.GetComponentsInChildren<Renderer>(true)) r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+        var bc = go.AddComponent<BoxCollider>(); bc.center = magCentre[w] - magHome[w]; bc.size = Vector3.Max(magSize[w], Vector3.one * 0.02f);
+        var cc = player.GetComponent<CharacterController>(); if (cc) Physics.IgnoreCollision(bc, cc);
+        var rb = go.AddComponent<Rigidbody>(); rb.mass = 0.45f; rb.interpolation = RigidbodyInterpolation.Interpolate;
+        rb.linearVelocity = cc ? cc.velocity * 0.8f : Vector3.zero; rb.linearVelocity += -cam.transform.up * 0.6f + cam.transform.forward * 0.2f;
+        rb.angularVelocity = Random.insideUnitSphere * 4f;
+        Destroy(go, 25f);
+    }
 
     public void KnifeAttack(bool heavy)
     {
@@ -157,8 +299,8 @@ public class ViewModel : MonoBehaviour
         if (Playing(reloadAnim))
         {
             float u = U(reloadAnim);
-            var ev = reloadAnim.weapon == AK ? new[] { 0.2f, 0.62f, 0.82f, 0.87f } : new[] { 0.13f, 0.27f, 0.66f, 0.85f };
-            var nm = reloadAnim.weapon == AK ? new[] { "magout", "magin", "boltback", "boltfwd" } : new[] { "boltback", "magout", "magin", "boltfwd" };
+            var ev = tacReload ? new[] { 0.33f, 0.53f, 0.7f } : new[] { 0.33f, 0.53f, 0.72f, 0.78f };
+            var nm = tacReload ? new[] { "magout", "magin", "boltfwd" } : new[] { "magout", "magin", "boltback", "boltfwd" };
             while (reloadAnim.fired < ev.Length && u >= ev[reloadAnim.fired]) onSound?.Invoke(nm[reloadAnim.fired++]);
         }
         if (Playing(boltAnim))
@@ -206,7 +348,9 @@ public class ViewModel : MonoBehaviour
         float yawRate = Mathf.DeltaAngle(lastYaw, rig.yaw) / dt, pitchRate = (rig.pitch - lastPitch) / dt;
         lastYaw = rig.yaw; lastPitch = rig.pitch;
         float swayK = Mathf.Lerp(1f, 0.25f, a);
-        var swayTarget = new Vector3(Mathf.Clamp(-pitchRate * 0.012f, -5, 5), Mathf.Clamp(-yawRate * 0.012f, -6, 6), Mathf.Clamp(yawRate * 0.008f, -5, 5)) * swayK;
+        // eyes, muzzle and target move together: the muzzle leads a fast turn a touch and the rifle rolls
+        // into it with the body, instead of dragging behind like a loose prop
+        var swayTarget = new Vector3(Mathf.Clamp(-pitchRate * 0.008f, -4, 4), Mathf.Clamp(yawRate * 0.005f, -3.5f, 3.5f), Mathf.Clamp(yawRate * 0.014f, -7, 7)) * swayK;
         swayR = Vector3.Lerp(swayR, swayTarget, 1 - Mathf.Exp(-9 * dt));
         swayP = Vector3.Lerp(swayP, new Vector3(Mathf.Clamp(-yawRate * 0.00012f, -0.012f, 0.012f), Mathf.Clamp(pitchRate * 0.0001f, -0.01f, 0.01f), 0) * swayK, 1 - Mathf.Exp(-9 * dt));
         rot += swayR; pos += swayP;
@@ -223,6 +367,13 @@ public class ViewModel : MonoBehaviour
         if (w == Knife) { pos += new Vector3(-0.01f, -0.03f, -0.02f) * sp; rot += new Vector3(22, 0, 8) * sp; }
         else { pos += new Vector3(-0.05f, 0.01f, -0.06f) * sp; rot += new Vector3(12, -38, 24) * sp; rot += new Vector3(Mathf.Sin(ph * 2) * 3f, 0, Mathf.Sin(ph) * 4f) * sp; }
 
+        // ready posture: low ready when nothing is happening (muzzle just under the line of sight), straight
+        // up to the shoulder the moment there is a threat, a shot or the aim button
+        bool calm = Time.time - combatAt > 2.5f && !sprint && w != Knife && !Playing(reloadAnim);
+        lowT = Mathf.MoveTowards(lowT, calm ? 1 : 0, dt / (calm ? 0.7f : 0.12f));
+        float low = Mathf.SmoothStep(0, 1, lowT) * free;
+        pos += new Vector3(0.01f, -0.035f, -0.015f) * low; rot += new Vector3(13f, -4f, 4f) * low;
+
         // strafe tilt, crouch cant, jump lift, landing dip
         rot.z += player.Strafe * 6f * free;
         crouchT = Mathf.Lerp(crouchT, player.crouch ? 1 : 0, 1 - Mathf.Exp(-8 * dt));
@@ -238,14 +389,9 @@ public class ViewModel : MonoBehaviour
 
         // key-frame animations
         Vector3 p, r;
-        if (Playing(reloadAnim) && reloadAnim.weapon == w)
-        {
-            float u = U(reloadAnim);
-            Eval(w == AK ? AkReloadGun : SnReloadGun, u, out p, out r); pos += p * (1 - a * 0.5f); rot += r;
-            if (mag[w]) { Eval(w == AK ? AkReloadMag : SnReloadMag, u, out p, out r); mag[w].localPosition = magHome[w] + p; mag[w].localEulerAngles = r; }
-            if (bolt[w]) { Eval(w == AK ? AkReloadBolt : SnReloadBolt, u, out p, out r); bolt[w].localPosition = boltHome[w] + p; }
-            if (handle[w] && w == Sniper) { Eval(SnReloadHandle, u, out p, out r); handle[w].localEulerAngles = r; }
-        }
+        bool reloadingW = Playing(reloadAnim) && reloadAnim.weapon == w;
+        if (!reloadingW) { if (spare[w]) spare[w].gameObject.SetActive(false); if (mag[w] && !mag[w].gameObject.activeSelf) mag[w].gameObject.SetActive(true); }
+        if (reloadingW) ReloadPose(w, U(reloadAnim), a, ref pos, ref rot);
         else if (Playing(boltAnim) && boltAnim.weapon == w)
         {
             float u = U(boltAnim);
@@ -271,12 +417,24 @@ public class ViewModel : MonoBehaviour
             Eval(raising ? Raise : Lower, Mathf.Clamp01(t), out p, out r); pos += p; rot += r;
         }
 
-        // against a wall: pull the gun back and tip the muzzle up
+        // close quarters: near a wall, a doorway or an enemy close in front, the rifle is pulled back into a
+        // compressed ready (stock high in the shoulder, muzzle still level on the threat); only right against
+        // the wall does the muzzle come up to high port
         float reach = w == Sniper ? 1.05f : w == AK ? 0.9f : 0.45f, d = reach;
         foreach (var h in Physics.SphereCastAll(cam.transform.position, 0.07f, cam.transform.forward, reach, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
             if (!h.collider.transform.IsChildOf(player.transform) && h.distance < d) d = h.distance;
-        block = Mathf.Lerp(block, Mathf.Clamp01((reach - d) / (reach * 0.55f)), 1 - Mathf.Exp(-12 * dt));
-        pos += new Vector3(-0.02f, -0.035f, -0.14f) * block; rot += new Vector3(-28, -10, 12) * block;
+        float near = 0;
+        foreach (var e in EnemyAI.All)
+        {
+            if (!e || e.IsDead) continue;
+            var to = e.transform.position - player.transform.position; float dd = to.magnitude;
+            if (dd < 6f && dd > 0.1f && Vector3.Dot(to / dd, cam.transform.forward) > 0.3f) near = Mathf.Max(near, 1 - dd / 6f);
+        }
+        closeT = Mathf.Lerp(closeT, near, 1 - Mathf.Exp(-8 * dt));
+        block = Mathf.Lerp(block, Mathf.Max(Mathf.Clamp01((reach - d) / (reach * 0.55f)), closeT * 0.55f), 1 - Mathf.Exp(-12 * dt));
+        float highPort = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(0.8f, 1f, block));
+        pos += new Vector3(0, 0, -0.17f) * block + new Vector3(-0.015f, 0.025f, 0) * block * free + new Vector3(0, -0.02f, 0.02f) * highPort;
+        rot += new Vector3(-3f, -4f, 4f) * block * free + new Vector3(-30f, -8f, 10f) * highPort;
 
         holder[w].localPosition = pos;
         holder[w].localRotation = Quaternion.Euler(rot);
@@ -391,11 +549,8 @@ public class ViewModel : MonoBehaviour
         if (w != Knife)
         {
             var gL = gm.TransformPoint(gripL[w]);
-            if (Playing(reloadAnim) && reloadAnim.weapon == w && mag[w])
-            {
-                float k = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(0.12f, 0.22f, U(reloadAnim))) * (1 - Mathf.SmoothStep(0, 1, Mathf.InverseLerp(0.6f, 0.72f, U(reloadAnim))));
-                gL = Vector3.Lerp(gL, mag[w].position + mag[w].up * -0.04f, k);
-            }
+            if (Playing(reloadAnim) && reloadAnim.weapon == w)
+                gL = Vector3.Lerp(LeftTarget(w, lhA, gL), LeftTarget(w, lhB, gL), lhK);
             var fingersL = r * 0.7f + u * 0.5f;
             var wristL = gL - fingersL.normalized * 0.065f - u * 0.03f - r * 0.01f;
             Hand(armL, wristL, fingersL, f, -ct.up - ct.right * 0.6f - ct.forward * 0.2f, midL, idxL, litL);

@@ -18,6 +18,8 @@ public class PlayerController : MonoBehaviour
     [HideInInspector] public float yaw;          // look direction, set by the camera
     [HideInInspector] public Vector2 moveInput;  // -1..1, from keyboard/stick (or AutoTest)
     [HideInInspector] public bool sprint, walk, crouch, jumpPressed, aiming;
+    [HideInInspector] public float leanInput;      // -1 left (Q) .. +1 right (E): peek round a corner
+    public float Lean { get; private set; }
     public bool externalInput;                   // AutoTest / touch controls drive the inputs
     [HideInInspector] public bool frozen;        // dead: no moving until the respawn
     [HideInInspector] public float combatUntil;  // kept for the weapon (sprint-to-fire)
@@ -66,7 +68,10 @@ public class PlayerController : MonoBehaviour
         SprintLock = sprinting && Speed > 1 ? 0.22f : Mathf.Max(0, SprintLock - dt);
         if (sprinting) combatUntil = 0;
 
+        // lean out from cover: not while sprinting; slower feet while leaning
+        Lean = Mathf.MoveTowards(Lean, sprinting ? 0 : Mathf.Clamp(leanInput, -1, 1), dt / 0.18f);
         float top = crouch ? (aiming ? CrouchAimMove : CrouchMove) : aiming ? AimMove : tactical ? TacticalMove : sprinting ? SprintMove : walk ? WalkSpeed : JogSpeed;
+        top *= 1f - 0.35f * Mathf.Abs(Lean);
         var wish = Quaternion.Euler(0, yaw, 0) * new Vector3(input.x, 0, input.y);
         if (wish.sqrMagnitude > 1e-4f) wish = wish.normalized * top * input.magnitude;
         float rate = !cc.isGrounded ? airControl : input.sqrMagnitude > 1e-4f ? accel : decel;
@@ -125,6 +130,7 @@ public class PlayerController : MonoBehaviour
             sprint = k.leftShiftKey.isPressed;
             walk = k.leftCtrlKey.isPressed || k.leftAltKey.isPressed;
             if (k.cKey.wasPressedThisFrame) crouch = !crouch;
+            leanInput = (k.eKey.isPressed ? 1 : 0) - (k.qKey.isPressed ? 1 : 0);
             if (k.spaceKey.wasPressedThisFrame) { jumpPressed = true; crouch = false; }
         }
         if (g != null)

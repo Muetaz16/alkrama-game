@@ -24,8 +24,8 @@ public class WeaponController : MonoBehaviour
 
     public Weapon[] weapons =
     {
-        new Weapon { name = "AK-47", auto = true, rpm = 600, damage = 34, spread = 1.6f, aimSpread = 0.3f, recoil = 0.9f, range = 400, magSize = 30, reserve = 180, reloadTime = 2.2f, aimFov = 50 },
-        new Weapon { name = "SNIPER", auto = false, rpm = 45, damage = 120, spread = 4f, aimSpread = 0.02f, recoil = 4f, range = 1200, muzzleVelocity = 850, magSize = 5, reserve = 30, reloadTime = 3f, aimFov = 11, scope = true },
+        new Weapon { name = "AK-47", auto = true, rpm = 600, damage = 34, spread = 1.1f, aimSpread = 0.06f, recoil = 0.9f, range = 450, muzzleVelocity = 715, magSize = 30, reserve = 180, reloadTime = 2.4f, aimFov = 50 },
+        new Weapon { name = "SNIPER", auto = false, rpm = 45, damage = 120, spread = 4f, aimSpread = 0.012f, recoil = 4f, range = 1200, muzzleVelocity = 850, magSize = 5, reserve = 30, reloadTime = 2.7f, aimFov = 11, scope = true },
         new Weapon { name = "KNIFE", melee = true, rpm = 140, damage = 100, range = 2.3f },
     };
     public int current;
@@ -161,17 +161,27 @@ public class WeaponController : MonoBehaviour
         // scope sway; Shift holds the breath
         if (Aiming && W.scope && aimT > 0.88f)
         {
-            float amp = holdBreath ? 0.03f : 0.32f; float t0 = breath, t1 = breath + Time.deltaTime; breath = t1;
+            float amp = (holdBreath ? 0.03f : 0.32f) * (1f + fatigue * 1.5f) * (player.crouch ? 0.7f : 1f); float t0 = breath, t1 = breath + Time.deltaTime; breath = t1;
             camRig.lookDelta += new Vector2((Mathf.Sin(t1 * 0.9f) - Mathf.Sin(t0 * 0.9f)) * amp, (Mathf.Sin(t1 * 1.4f + 1) - Mathf.Sin(t0 * 1.4f + 1)) * amp * 0.8f);
         }
 
-        if (reloadPressed && !W.melee && !reloading && !vm.Busy && W.mag < W.magSize && W.reserve > 0) StartReload();
+        if (reloadPressed && !W.melee && !reloading && !vm.Busy && W.mag <= W.magSize && W.reserve > 0) StartReload();
         reloadPressed = false;
         if (reloading && Time.time >= reloadEnd)
         {
-            int need = W.magSize - W.mag, take = Mathf.Min(need, W.reserve);
-            W.mag += take; W.reserve -= take; reloading = false;
+            if (tacticalReload)
+            {
+                // one stays in the chamber, the part-used mag goes back in the pouch
+                int keep = Mathf.Max(0, W.mag - 1); W.reserve += keep;
+                int take = Mathf.Min(W.magSize, W.reserve); W.reserve -= take; W.mag = take + 1;
+            }
+            else { int take = Mathf.Min(W.magSize, W.reserve); W.reserve -= take; W.mag = take; }
+            reloading = false;
         }
+        Fatigue();
+        RecoilRecovery();
+        AimSway();
+        if (Aiming || fireHeld || Time.time - LastShotTime < 0.2f || reloading || EnemyAI.All.Exists(e => e && e.SeesPlayer)) vm.combatAt = Time.time;
 
         bool ready = !reloading && !vm.Busy && Time.time >= nextShot && !player.Sprinting && player.SprintLock <= 0;
         if (W.melee)
@@ -211,7 +221,58 @@ public class WeaponController : MonoBehaviour
         else if (dof.mode.value != DepthOfFieldMode.Off) dof.mode.Override(DepthOfFieldMode.Off);
     }
 
-    void StartReload() { reloading = true; reloadEnd = Time.time + W.reloadTime; vm.Reload(current, W.reloadTime); }
+    bool tacticalReload;
+    public bool LastReloadTactical => tacticalReload;
+    void StartReload()
+    {
+        tacticalReload = W.mag > 0;                                 // rounds left: tactical; empty: emergency
+        float t = W.reloadTime * (tacticalReload ? 1.05f : 0.95f);
+        reloading = true; reloadEnd = Time.time + t; vm.Reload(current, t, tacticalReload);
+    }
+
+    // ---------- the shooter's body ----------
+    // fatigue builds while sprinting and fades when you stop: a racing heart shakes the sights
+    float fatigue, swayT;
+    public float FatigueLevel => fatigue;
+    void Fatigue() => fatigue = Mathf.Clamp01(fatigue + (player.Sprinting ? Time.deltaTime / 6f : -Time.deltaTime / 9f));
+
+    // sights drift with breathing and heartbeat when aiming (scope sway is handled separately)
+    void AimSway()
+    {
+        if (!Aiming || W.melee || W.scope || aimT < 0.5f) return;
+        float moving = Mathf.Clamp01(player.Speed / PlayerController.JogSpeed);
+        float amp = (0.05f + fatigue * 0.3f + moving * 0.12f) * (player.crouch ? 0.6f : 1f);
+        float t0 = swayT, t1 = swayT + Time.deltaTime; swayT = t1;
+        float beat(float t) => Mathf.Pow(Mathf.Max(0, Mathf.Sin(t * (5f + fatigue * 5f))), 8) * fatigue * 0.6f;
+        float nx(float t) => Mathf.Sin(t * 0.7f) * 0.6f + Mathf.Sin(t * 1.9f + 1.3f) * 0.4f;
+        float ny(float t) => Mathf.Sin(t * 1.1f + 0.4f) * 0.7f + beat(t);
+        camRig.lookDelta += new Vector2(nx(t1) - nx(t0), ny(t1) - ny(t0)) * amp;
+    }
+
+    // ---------- recoil: the AK climbs, pulls right and wanders; the shooter brings it back down ----------
+    int burstCount; float lastShotT; Vector2 recoilDebt;
+    void Kick()
+    {
+        if (Time.time - lastShotT > 0.35f) burstCount = 0;
+        burstCount++; lastShotT = Time.time;
+        float mult = (Aiming ? 0.6f : 1f) * (player.crouch ? 0.75f : 1f) * (1f + fatigue * 0.25f);
+        Vector2 k;
+        if (W.scope) k = new Vector2(Random.Range(-0.3f, 0.3f), 2.4f);
+        else
+        {
+            float v = burstCount == 1 ? 0.32f : 0.5f + Mathf.Min(burstCount, 8) * 0.03f;
+            float h = burstCount < 5 ? 0.12f : Mathf.Sin(burstCount * 0.9f) * 0.35f;
+            k = new Vector2(h + Random.Range(-0.1f, 0.1f), v);
+        }
+        k *= mult;
+        camRig.lookDelta += k; recoilDebt += k * 0.7f;               // 70% of it is pulled back down
+    }
+    void RecoilRecovery()
+    {
+        if (Time.time - lastShotT < 0.09f || recoilDebt.sqrMagnitude < 1e-5f) return;
+        var rec = recoilDebt * (1 - Mathf.Exp(-9f * Time.deltaTime));
+        camRig.lookDelta -= rec; recoilDebt -= rec;
+    }
 
     void ReadInput()
     {
@@ -243,17 +304,25 @@ public class WeaponController : MonoBehaviour
     void Fire()
     {
         W.mag--; LastShotTime = Time.time;
-        var origin = cam.transform.position;
-        var aim = AimPoint(out _);
-        var dir = (aim - origin).normalized;
-        // spread: tighter when aiming, wider when moving
-        float moving = new Vector2(player.moveInput.x, player.moveInput.y).magnitude;
-        float spread = (Aiming ? W.aimSpread : W.spread) * (1 + moving * 0.8f);
-        dir = Quaternion.AngleAxis(Random.Range(-spread, spread), cam.transform.up) * Quaternion.AngleAxis(Random.Range(-spread, spread), cam.transform.right) * dir;
+        var origin = cam.transform.position; var ct = cam.transform;
+        var aimDir = cam.ViewportPointToRay(new Vector3(0.5f, 0.5f)).direction;
+        // the bore is 6.5 cm under the sight line and the rifle is zeroed (AK 100 m, sniper 200 m): close up the
+        // round hits a little low, at the zero right on, beyond it drops
+        float v = W.muzzleVelocity > 0 ? W.muzzleVelocity : 715f, zero = W.scope ? 200f : 100f;
+        var start = origin - ct.up * 0.065f;
+        var dir = ((origin + aimDir * zero) - start).normalized;
+        float tz = zero / v; float lift = Mathf.Atan2(0.5f * 9.81f * tz * tz, zero) * Mathf.Rad2Deg;
+        dir = Quaternion.AngleAxis(-lift, ct.right) * dir;
+        // spread: a still, aimed first round goes where the sights are; moving, firing long bursts, a racing
+        // heart and hip firing open it up
+        float moving = Mathf.Clamp(player.Speed / PlayerController.JogSpeed, 0, 2);
+        float spread = Aiming ? W.aimSpread * (1 + moving * 3f) : W.spread * (1 + moving * 0.6f);
+        spread *= (1 + fatigue * 0.8f) * (player.crouch ? 0.7f : 1f);
+        spread += Mathf.Min(1.2f, Mathf.Max(0, burstCount) * (Aiming ? 0.05f : 0.12f));
+        if (burstCount == 0 && moving < 0.1f) spread *= 0.4f;
+        dir = Quaternion.AngleAxis(Random.Range(-spread, spread), ct.up) * Quaternion.AngleAxis(Random.Range(-spread, spread), ct.right) * dir;
 
-        bool hit; RaycastHit h;
-        if (W.muzzleVelocity > 0) hit = Ballistic(origin, dir * W.muzzleVelocity, out h);
-        else hit = RayNotSelf(origin, dir, W.range, out h);
+        bool hit = Ballistic(start, dir * v, out var h);
 
         var muzzle = Muzzle();
         tracer.SetPosition(0, muzzle); tracer.SetPosition(1, hit ? h.point : origin + dir * 200);
@@ -261,7 +330,7 @@ public class WeaponController : MonoBehaviour
         flash.transform.position = muzzle; flashOff = Time.time + 0.04f;
         audioSrc.pitch = Random.Range(0.93f, 1.05f);
         audioSrc.PlayOneShot(W.scope ? sniperClip : rifleClip);
-        camRig.lookDelta += new Vector2(Random.Range(-0.25f, 0.25f) * W.recoil, W.recoil * (Aiming ? 0.55f : 0.9f));
+        Kick();
         vm.Fire(current, Aiming);
         if (current == 0) Shell(0);
 
@@ -387,7 +456,10 @@ public class WeaponController : MonoBehaviour
     void LateUpdate()
     {
         if (chest && !camRig.firstPerson)
+        {
             chest.rotation = Quaternion.AngleAxis(camRig.pitch * 0.55f, transform.right) * chest.rotation;
+            chest.rotation = Quaternion.AngleAxis(-player.Lean * 18f, transform.forward) * chest.rotation;
+        }
     }
 
     void ShowWeapon()
@@ -538,7 +610,7 @@ public class WeaponController : MonoBehaviour
         var small = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(h * 0.021f) };
         string ammo = W.melee ? "" : reloading ? "RELOADING" : $"{W.mag} / {W.reserve}";
         Shadowed(new Rect(w - 420, h - 110, 400, 90), $"{W.name}\n{ammo}", style);
-        Shadowed(new Rect(20, h - 70, 1500, 60), "LMB fire · RMB aim · R reload · 1/2/3 weapon · F knife · V view · Shift sprint / hold breath · C crouch · Space jump" + (lastShot != "" ? $"   last: {lastShot}" : ""), small);
+        Shadowed(new Rect(20, h - 70, 1500, 60), "LMB fire · RMB aim · R reload · Q/E lean · 1/2/3 weapon · F knife · V view · Shift sprint / hold breath · C crouch · Space jump" + (lastShot != "" ? $"   last: {lastShot}" : ""), small);
     }
 
     // white text with a dark shadow so it reads on bright stone and sky

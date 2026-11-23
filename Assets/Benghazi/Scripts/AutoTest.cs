@@ -88,13 +88,36 @@ public class AutoTest : MonoBehaviour
         log.WriteLine($"rifle burst at {Vector3.Distance(near.transform.position, player.transform.position):F0} m: {gun.hits - before} hits, mag {gun.W.mag}");
         yield return new WaitForSeconds(0.4f);
         // reload: the magazine comes out and a new one goes in
+        // tactical reload (rounds left): fresh mag strips the old one, old one kept, one stays chambered
+        int before2 = gun.W.mag;
         gun.reloadPressed = true;
-        yield return new WaitForSeconds(0.62f);
+        yield return new WaitForSeconds(0.45f);
+        yield return Shot("fp_reload_pouch.png");
+        yield return new WaitForSeconds(0.42f);
         yield return Shot("fp_reload_magout.png");
-        yield return new WaitForSeconds(0.5f);
+        log.WriteLine("reload debug: " + gun.View.ReloadDebug());
+        yield return new WaitForSeconds(0.42f);
         yield return Shot("fp_reload_magin.png");
         yield return new WaitForSeconds(1.4f);
-        log.WriteLine($"reloaded: mag {gun.W.mag}");
+        log.WriteLine($"tactical reload: tactical {gun.LastReloadTactical}, mag {before2} -> {gun.W.mag}, reserve {gun.W.reserve}");
+        // emergency reload (empty): old mag drops, fresh one in, charging handle racked
+        gun.W.mag = 0; gun.reloadPressed = true;
+        yield return new WaitForSeconds(0.85f);
+        yield return Shot("fp_reload_drop.png");
+        yield return new WaitForSeconds(0.85f);
+        yield return Shot("fp_reload_rack.png");
+        yield return new WaitForSeconds(0.9f);
+        log.WriteLine($"emergency reload: tactical {gun.LastReloadTactical}, mag 0 -> {gun.W.mag}, dropped mags on the ground {GameObject.FindObjectsByType<Transform>(FindObjectsSortMode.None).Length > 0 && GameObject.Find("Dropped mag") != null}");
+        // leaning out right, then left
+        player.leanInput = 1f; yield return new WaitForSeconds(0.5f);
+        yield return Shot("fp_lean_right.png");
+        var camT = Camera.main.transform; log.WriteLine($"lean right: head {Vector3.Dot(camT.position - player.transform.position, player.transform.right):F2} m to the side, roll {camT.eulerAngles.z:F0} deg");
+        player.leanInput = -1f; yield return new WaitForSeconds(0.6f);
+        yield return Shot("fp_lean_left.png");
+        player.leanInput = 0; yield return new WaitForSeconds(0.4f);
+        // low ready after a quiet moment
+        yield return new WaitForSeconds(3.2f);
+        yield return Shot("fp_low_ready.png");
         // sniper: farthest target, scope in, one shot, bolt cycle
         var far = targets[targets.Length - 1];
         gun.switchTo = 1;
