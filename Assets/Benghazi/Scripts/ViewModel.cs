@@ -20,11 +20,11 @@ public class ViewModel : MonoBehaviour
     Renderer[][] renderers = new Renderer[3][];
 
     // hip poses (camera space) and how far in front of the eye the sight sits when aiming
-    static readonly Vector3[] HipPos = { new(0.13f, -0.19f, 0.34f), new(0.14f, -0.195f, 0.33f), new(0.135f, -0.135f, 0.27f) };
+    static readonly Vector3[] HipPos = { new(0.13f, -0.19f, 0.34f), new(0.14f, -0.195f, 0.33f), new(0.15f, -0.17f, 0.36f) };
     static readonly Vector3[] HipRot = { new(1f, -1.5f, 2f), new(1f, -1.5f, 2f), new(-28f, -14f, -22f) };
     static readonly float[] AdsDist = { 0.27f, 0.05f, 0f };
     float AdsDistance(int w) => w == AK && GunFactory.RealAK ? 0.21f : AdsDist[w];      // iron sights sit closer to the eye than a red dot
-    Vector3 Hip(int w) => w == AK && GunFactory.RealAK ? new Vector3(0.14f, -0.2f, 0.47f) : HipPos[w];   // the real AK's stock is long: hold it further out
+    Vector3 Hip(int w) => w == AK && GunFactory.RealAK ? new Vector3(0.13f, -0.2f, 0.37f) : HipPos[w];   // the real AK's stock is long: hold it further out
 
     public int Shown { get; private set; }
     public float aimT;                       // 0 hip .. 1 aiming, set by the weapon
@@ -285,6 +285,182 @@ public class ViewModel : MonoBehaviour
         bool scoped = w == Sniper && aimT > 0.88f && !Playing(boltAnim);
         foreach (var rr in renderers[w]) rr.enabled = !scoped;
         scopeHide = scoped ? 1 : 0;
+        Arms(w, scoped);
+    }
+
+    // ---------- arms: the soldier's own sleeves and gloves, holding the gun ----------
+    // A copy of the player's body sits just under the camera, turned with it; head and legs are folded away,
+    // the torso stays below the view. Each frame both arms are bent (two-bone IK) so the right hand is on
+    // the pistol grip and the left on the handguard (or the magazine during a reload), and each hand is
+    // turned so it really wraps the grip.
+    Transform arms, midR, idxR, litR, midL, idxL, litL;
+    readonly Transform[] armR = new Transform[3], armL = new Transform[3];
+    readonly Quaternion[] restR = new Quaternion[3], restL = new Quaternion[3];
+    readonly Vector3[] gripR = new Vector3[3], gripL = new Vector3[3];
+    Transform[][] fingR; Quaternion[][] fingRest;      // right hand: index, middle, ring, little, thumb x (proximal, intermediate, distal)
+
+    public void BuildArms(Animator src)
+    {
+        if (!src || !root) return;
+        var go = Instantiate(src.gameObject, root, true); go.name = "FP Arms";
+        foreach (var t in go.GetComponentsInChildren<Transform>(true))
+            if (t && (t.name == "Rifle" || t.name == "Sniper" || t.name == "Knife")) { t.gameObject.SetActive(false); Destroy(t.gameObject); }
+        foreach (var c in go.GetComponentsInChildren<Collider>(true)) Destroy(c);
+        var a = go.GetComponent<Animator>(); if (!a) { Destroy(go); return; }
+        Transform B(HumanBodyBones b) => a.GetBoneTransform(b);
+        armR[0] = B(HumanBodyBones.RightUpperArm); armR[1] = B(HumanBodyBones.RightLowerArm); armR[2] = B(HumanBodyBones.RightHand);
+        armL[0] = B(HumanBodyBones.LeftUpperArm); armL[1] = B(HumanBodyBones.LeftLowerArm); armL[2] = B(HumanBodyBones.LeftHand);
+        midR = B(HumanBodyBones.RightMiddleProximal); idxR = B(HumanBodyBones.RightIndexProximal); litR = B(HumanBodyBones.RightLittleProximal);
+        midL = B(HumanBodyBones.LeftMiddleProximal); idxL = B(HumanBodyBones.LeftIndexProximal); litL = B(HumanBodyBones.LeftLittleProximal);
+        if (!armR[0] || !armR[2] || !armL[0] || !armL[2]) { Destroy(go); return; }
+        // fold away what the camera must not see
+        foreach (var b in new[] { HumanBodyBones.Neck, HumanBodyBones.Head, HumanBodyBones.LeftUpperLeg, HumanBodyBones.RightUpperLeg })
+        { var t = B(b); if (t) t.localScale = Vector3.one * 0.001f; }
+        var fb = new[] {
+            new[] { HumanBodyBones.RightIndexProximal, HumanBodyBones.RightIndexIntermediate, HumanBodyBones.RightIndexDistal },
+            new[] { HumanBodyBones.RightMiddleProximal, HumanBodyBones.RightMiddleIntermediate, HumanBodyBones.RightMiddleDistal },
+            new[] { HumanBodyBones.RightRingProximal, HumanBodyBones.RightRingIntermediate, HumanBodyBones.RightRingDistal },
+            new[] { HumanBodyBones.RightLittleProximal, HumanBodyBones.RightLittleIntermediate, HumanBodyBones.RightLittleDistal },
+            new[] { HumanBodyBones.RightThumbProximal, HumanBodyBones.RightThumbIntermediate, HumanBodyBones.RightThumbDistal } };
+        fingR = new Transform[5][]; fingRest = new Quaternion[5][];
+        for (int i = 0; i < 5; i++)
+        {
+            fingR[i] = System.Array.ConvertAll(fb[i], B); fingRest[i] = new Quaternion[3];
+            for (int j = 0; j < 3; j++) if (fingR[i][j]) fingRest[i][j] = fingR[i][j].localRotation;
+        }
+        a.enabled = false;
+        for (int i = 0; i < 3; i++) { restR[i] = armR[i].localRotation; restL[i] = armL[i].localRotation; }
+        foreach (var r in go.GetComponentsInChildren<Renderer>(true))
+        {
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off; r.receiveShadows = true;
+            if (r is SkinnedMeshRenderer sk) sk.updateWhenOffscreen = true;
+        }
+        go.transform.localScale *= 1.34f;
+        Debug.Log("[arms] renderers: " + string.Join(", ", System.Array.ConvertAll(go.GetComponentsInChildren<Renderer>(true), x => x.name)));                  // viewmodel arms are a little long, as in every shooter
+        arms = go.transform;
+        // where the hands go on each weapon (gun space)
+        bool realAK = GunFactory.RealAK, realSn = GunFactory.Find(model[Sniper], "steel") != null;
+        gripR[AK] = realAK ? new Vector3(0, -0.045f, -0.01f) : new Vector3(0, -0.05f, -0.09f);
+        gripL[AK] = realAK ? new Vector3(0, 0.035f, 0.31f) : new Vector3(0, 0.01f, 0.3f);
+        gripR[Sniper] = realSn ? new Vector3(0, -0.05f, 0.0f) : new Vector3(0, -0.06f, -0.1f);
+        var gl = GunFactory.Find(model[Sniper], "GripL");
+        gripL[Sniper] = gl ? model[Sniper].InverseTransformPoint(gl.position) : new Vector3(0, -0.01f, 0.25f);
+        gripR[Knife] = new Vector3(0, 0, -0.005f);
+    }
+
+    void Arms(int w, bool scoped)
+    {
+        if (!arms) return;
+        arms.gameObject.SetActive(!scoped);
+        if (scoped) return;
+        var ct = cam.transform;
+        for (int i = 0; i < 3; i++) { armR[i].localRotation = restR[i]; armL[i].localRotation = restL[i]; }
+        if (fingR != null) for (int i = 0; i < 5; i++) for (int j = 0; j < 3; j++) if (fingR[i][j]) fingR[i][j].localRotation = fingRest[i][j];
+        // shoulders just under and in front of the eye, turned with the view
+        arms.rotation = ct.rotation;
+        var mid = (armR[0].position + armL[0].position) * 0.5f;
+        arms.position += ct.position + ct.rotation * new Vector3(0, -0.34f, 0.03f) - mid;   // body well under the view
+
+        var gm = model[w];
+        Vector3 f = gm.forward, u = gm.up, r = gm.right;
+        // right hand: on the pistol grip, index on the trigger
+        if (w == Knife)
+        {
+            // the knife: the same closed fist as on the rifle grip, placed where the knife animation puts the
+            // knife; then the knife is put into the fist (handle through it, blade out of the index side)
+            var hf = holder[w]; Vector3 hfF = hf.forward, hfU = hf.up, hfR = hf.right;
+            Vector3 kf = hfF * 0.85f - hfR * 0.35f, ka = hfU * 0.9f + hfF * 0.25f;
+            Hand(armR, hf.position - kf.normalized * 0.07f, kf, ka, -ct.up + ct.right * 0.7f - ct.forward * 0.2f, midR, idxR, litR);
+            if (midR && idxR && litR)
+            {
+                var h = armR[2]; Vector3 aF = (midR.position - h.position).normalized, aA = (idxR.position - litR.position).normalized;
+                var palm = MakeFist(aF, aA);
+                var centre = midR.position + palm * 0.03f - aF * 0.012f;
+                gm.SetPositionAndRotation(centre, Quaternion.LookRotation(aA, -palm));
+            }
+        }
+        else
+        {
+            Vector3 fingers = f * 0.85f - r * 0.35f, across = u * 0.9f + f * 0.25f;
+            var gR = gm.TransformPoint(gripR[w]);
+            var wristR = gR - fingers.normalized * 0.07f + r * 0.025f + u * 0.015f;
+            Hand(armR, wristR, fingers, across, -ct.up + ct.right * 0.7f - ct.forward * 0.2f, midR, idxR, litR);
+        }
+        // left hand: under the handguard, palm up (none on the knife)
+        armL[0].localScale = w == Knife ? Vector3.one * 0.001f : Vector3.one;
+        if (w != Knife)
+        {
+            var gL = gm.TransformPoint(gripL[w]);
+            if (Playing(reloadAnim) && reloadAnim.weapon == w && mag[w])
+            {
+                float k = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(0.12f, 0.22f, U(reloadAnim))) * (1 - Mathf.SmoothStep(0, 1, Mathf.InverseLerp(0.6f, 0.72f, U(reloadAnim))));
+                gL = Vector3.Lerp(gL, mag[w].position + mag[w].up * -0.04f, k);
+            }
+            var fingersL = r * 0.7f + u * 0.5f;
+            var wristL = gL - fingersL.normalized * 0.065f - u * 0.03f - r * 0.01f;
+            Hand(armL, wristL, fingersL, f, -ct.up - ct.right * 0.6f - ct.forward * 0.2f, midL, idxL, litL);
+        }
+    }
+
+    // close the right hand into a fist (fingers bend about the knuckle line, towards the palm); returns the
+    // direction from the back of the hand to the palm
+    Vector3 MakeFist(Vector3 aF, Vector3 aA)
+    {
+        if (fingR == null || !fingR[1][0] || !fingR[1][2]) return Vector3.zero;
+        var tip0 = fingR[1][2].position - fingR[1][0].position;          // the grip pose already bends the fingers a little
+        var palm = Vector3.ProjectOnPlane(tip0, aF); palm = palm.sqrMagnitude > 1e-6f ? palm.normalized : Vector3.Cross(aA, aF).normalized;
+        var axis = aA.normalized;
+        float[] bend = { 62f, 78f, 55f };
+        for (int i = 0; i < 4; i++)
+        {
+            var f = fingR[i]; if (!f[0]) continue;
+            var tipT = f[2] ? f[2] : f[1] ? f[1] : f[0];
+            // which way round bends towards the palm
+            var before = f[0].rotation; f[0].rotation = Quaternion.AngleAxis(30f, axis) * before;
+            float plus = Vector3.Dot(tipT.position - f[0].position, palm); f[0].rotation = Quaternion.AngleAxis(-30f, axis) * before;
+            float minus = Vector3.Dot(tipT.position - f[0].position, palm); f[0].rotation = before;
+            float sgn = plus >= minus ? 1 : -1;
+            for (int j = 0; j < 3; j++) if (f[j]) f[j].rotation = Quaternion.AngleAxis(bend[j] * sgn, axis) * f[j].rotation;
+        }
+        // thumb wraps over the fingers
+        var th = fingR[4];
+        if (th[0] && th[1])
+        {
+            var before = th[1].rotation; th[1].rotation = Quaternion.AngleAxis(25f, aF) * before;
+            float plus = Vector3.Dot((th[2] ? th[2] : th[1]).position - th[0].position, palm); th[1].rotation = Quaternion.AngleAxis(-25f, aF) * before;
+            float minus = Vector3.Dot((th[2] ? th[2] : th[1]).position - th[0].position, palm); th[1].rotation = before;
+            float sgn = plus >= minus ? 1 : -1;
+            th[1].rotation = Quaternion.AngleAxis(35f * sgn, aF) * th[1].rotation;
+            if (th[2]) th[2].rotation = Quaternion.AngleAxis(30f * sgn, aF) * th[2].rotation;
+        }
+        return palm;
+    }
+
+    void Hand(Transform[] a, Vector3 wrist, Vector3 fingers, Vector3 across, Vector3 pole, Transform mid, Transform idx, Transform lit)
+    {
+        TwoBone(a[0], a[1], a[2], wrist, pole);
+        if (!mid || !idx || !lit) return;
+        var h = a[2];
+        Vector3 cF = (mid.position - h.position).normalized, cA = (idx.position - lit.position).normalized;
+        Vector3 dF = fingers.normalized, dA = across.normalized;
+        var cur = Quaternion.LookRotation(cF, Vector3.Cross(cF, cA));
+        var want = Quaternion.LookRotation(dF, Vector3.Cross(dF, dA));
+        h.rotation = want * Quaternion.Inverse(cur) * h.rotation;
+    }
+
+    static void TwoBone(Transform a, Transform b, Transform c, Vector3 target, Vector3 pole)
+    {
+        Vector3 pa = a.position, pb = b.position, pc = c.position;
+        float l1 = (pb - pa).magnitude, l2 = (pc - pb).magnitude;
+        var toT = target - pa;
+        float dist = Mathf.Clamp(toT.magnitude, Mathf.Abs(l1 - l2) + 1e-3f, l1 + l2 - 1e-3f);
+        var dir = toT.normalized;
+        float cosA = Mathf.Clamp((l1 * l1 + dist * dist - l2 * l2) / (2 * l1 * dist), -1, 1);
+        var perp = pole - dir * Vector3.Dot(pole, dir); if (perp.sqrMagnitude < 1e-6f) perp = Vector3.down; perp.Normalize();
+        var elbow = pa + dir * (l1 * cosA) + perp * (l1 * Mathf.Sqrt(1 - cosA * cosA));
+        var hand = pa + dir * dist;
+        a.rotation = Quaternion.FromToRotation(pb - pa, elbow - pa) * a.rotation;
+        b.rotation = Quaternion.FromToRotation(c.position - b.position, hand - elbow) * b.rotation;
     }
     public bool Scoped => scopeHide > 0.5f;
 

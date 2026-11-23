@@ -92,6 +92,7 @@ public class WeaponController : MonoBehaviour
         // first-person gun
         vm = cam.gameObject.AddComponent<ViewModel>();
         vm.Init(player, camRig, cam);
+        vm.BuildArms(anim);                              // the soldier's own arms hold the gun in first person
         vm.onSound = OnVmSound; vm.onKnifeHit = MeleeHit; vm.onEject = () => Shell(1);
 
         audioSrc = gameObject.AddComponent<AudioSource>(); audioSrc.spatialBlend = 0; audioSrc.volume = 0.8f;
