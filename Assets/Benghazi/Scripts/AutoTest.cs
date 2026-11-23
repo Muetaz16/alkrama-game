@@ -7,7 +7,7 @@ using UnityEngine;
 // and jumps, saves screenshots to ../unity_shots/ and a log of positions, then quits.
 public class AutoTest : MonoBehaviour
 {
-    PlayerController player; float startYaw;
+    PlayerController player; float startYaw; Vector3 startPos;
     ThirdPersonCamera cam;
     StreamWriter log;
     string outDir;
@@ -17,7 +17,7 @@ public class AutoTest : MonoBehaviour
         if (!System.Environment.CommandLine.Contains("-autotest")) { enabled = false; return; }
         player = FindFirstObjectByType<PlayerController>();
         cam = FindFirstObjectByType<ThirdPersonCamera>();
-        player.externalInput = true; cam.externalInput = true; startYaw = player.yaw;
+        player.externalInput = true; cam.externalInput = true; startYaw = player.yaw; startPos = player.transform.position;
         outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../unity_shots"));
         if (!Application.isEditor) outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../../unity_shots"));
         Directory.CreateDirectory(outDir);
@@ -71,12 +71,12 @@ public class AutoTest : MonoBehaviour
         // rifle: aim at a near target, short burst
         var near = targets[Mathf.Min(1, targets.Length - 1)];
         log.WriteLine("target distances: " + string.Join(", ", System.Array.ConvertAll(targets, x => Vector3.Distance(x.transform.position, player.transform.position).ToString("F0"))));
-        LookAt(near.transform.position + Vector3.up * 0.95f);
+        LookAt(near.transform.position + Vector3.up * 0.55f);     // torso centre (0.95 is the gap under the head)
         yield return new WaitForSeconds(0.3f);
         yield return Shot("fp_rifle_hip.png");
         gun.aimHeld = true;
         yield return new WaitForSeconds(0.6f);
-        LookAt(near.transform.position + Vector3.up * 0.95f);
+        LookAt(near.transform.position + Vector3.up * 0.55f);
         yield return null;
         yield return Shot("fp_rifle_ads.png");
         int before = gun.hits;
@@ -460,6 +460,19 @@ public class AutoTest : MonoBehaviour
         yield return EnemyMovement();
         yield return EnemyWatch();
         cam.yaw = startYaw; cam.pitch = 8f;                                  // face the way we started
+        // from the knife target this heading runs into a median palm: sprint into it, then back off -
+        // the player must come free again (he used to stay wedged in the trunk)
+        yield return Step("bump walk", Vector2.up, 2f, walk: true);
+        yield return Step("bump run", Vector2.up, 2f);
+        yield return Step("bump sprint", Vector2.up, 2f, sprint: true);
+        yield return Shot("bump_palm.png");
+        yield return Step("bump back off", Vector2.down, 1.5f);
+        yield return Step("bump strafe", Vector2.left, 1.5f);
+        // the movement steps run from the start point, on open ground
+        var pcc = player.GetComponent<CharacterController>();
+        pcc.enabled = false; player.transform.position = startPos; pcc.enabled = true;
+        player.moveInput = Vector2.zero;
+        yield return new WaitForSeconds(0.3f);
         yield return Shot("play_start.png");
         yield return Step("idle", Vector2.zero, 1f);
         yield return Step("walk", Vector2.up, 2f, walk: true);

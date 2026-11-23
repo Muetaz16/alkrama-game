@@ -333,8 +333,9 @@ public static class Seafront
             float lean = R(0, 7f), dir = R(0, 360f);
             var trunk = Trunk(h, lean);
             var m = Matrix4x4.TRS(pos, Quaternion.Euler(0, dir, 0), Vector3.one);
-            Add(trunk, m, bark, true);
+            Add(trunk, m, bark, false);
             var top = pos + Quaternion.Euler(0, dir, 0) * TopOffset(h, lean);
+            TrunkCapsules(TrunkColliderRoot(root), pos, top);
             Sphere(top + Vector3.down * 0.15f, new Vector3(0.62f, 0.8f, 0.62f), Quaternion.identity, boot);
             Add(collar, Matrix4x4.TRS(top + Vector3.down * 0.25f, Quaternion.Euler(0, R(0, 360), 0), Vector3.one), frond[1], false);
             // hanging bunches of dates on some of the green palms
@@ -360,6 +361,69 @@ public static class Seafront
             }
         }
         return spots.Count;
+    }
+
+    // Trunk collision: a few capsules along the curve. The trunk mesh itself is a thin open tube - as a
+    // MeshCollider the player's capsule could end up overlapping it (sprinting up the median kerb into a
+    // palm) and then not move in any direction.
+    const string TrunkColliders = "Palm trunk colliders";
+    static Transform TrunkColliderRoot(Transform root)
+    {
+        var t = root.Find(TrunkColliders);
+        if (!t) { t = new GameObject(TrunkColliders).transform; t.SetParent(root, false); }
+        return t;
+    }
+    static void TrunkCapsules(Transform parent, Vector3 pos, Vector3 top)
+    {
+        const int parts = 4;
+        float h = top.y - pos.y; var lean = new Vector3(top.x - pos.x, 0, top.z - pos.z);   // same curve as Trunk(): offset grows with u squared
+        Vector3 At(float u) => pos + Vector3.up * (u * h) + lean * (u * u);
+        for (int k = 0; k < parts; k++)
+        {
+            Vector3 a = At(k / (float)parts), b = At((k + 1) / (float)parts);
+            float r = Mathf.Lerp(0.3f, 0.22f, (k + 0.5f) / parts);
+            var go = new GameObject("Trunk"); go.transform.SetParent(parent, false); go.isStatic = true; go.layer = 20;
+            go.transform.SetPositionAndRotation((a + b) * 0.5f, Quaternion.FromToRotation(Vector3.up, b - a));
+            var c = go.AddComponent<CapsuleCollider>(); c.direction = 1; c.radius = r; c.height = (b - a).magnitude + 2 * r;
+        }
+    }
+
+    // Swap the trunk collision in the scene as it is, without regenerating the seafront (which would also
+    // reset the materials LookPro dresses afterwards):
+    //   Unity.exe -batchmode -quit -projectPath <proj> -executeMethod Seafront.PalmCollidersOnly
+    public static void PalmCollidersOnly()
+    {
+        var scene = EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
+        var root = GameObject.Find("Seafront"); var holder = root ? root.transform.Find("Palms") : null;
+        if (!holder) { Debug.LogError("[seafront] no Seafront/Palms in the scene"); EditorApplication.Exit(1); return; }
+        // the trunks are read back from the combined bark meshes: each trunk is (rings + 1) rings of (seg + 1)
+        // vertices (see Trunk()), the first ring is its foot and the last its top
+        const int ring = 11, perTrunk = 13 * ring;
+        var trunks = new List<(Vector3 foot, Vector3 top)>(); var bark = new List<Transform>();
+        foreach (Transform t in root.transform)
+        {
+            if (!t.name.Contains("PalmBark") || !t.TryGetComponent<MeshFilter>(out var mf) || !mf.sharedMesh) continue;
+            var v = mf.sharedMesh.vertices;
+            if (v.Length == 0 || v.Length % perTrunk != 0) { Debug.LogError($"[seafront] {t.name}: {v.Length} vertices is not whole trunks - run Seafront.Run instead"); EditorApplication.Exit(1); return; }
+            Vector3 Centre(int first) { var c = Vector3.zero; for (int i = 0; i < ring - 1; i++) c += v[first + i]; return t.TransformPoint(c / (ring - 1)); }
+            for (int o = 0; o < v.Length; o += perTrunk) trunks.Add((Centre(o), Centre(o + perTrunk - ring)));
+            bark.Add(t);
+        }
+        // every trunk must end under a crown, or the meshes are not what this expects
+        foreach (var (foot, top) in trunks)
+        {
+            bool crown = false; foreach (Transform c in holder) if (Vector3.Distance(c.position, top) < 0.05f) { crown = true; break; }
+            if (!crown || top.y - foot.y < 5f) { Debug.LogError($"[seafront] trunk at {foot} has no crown on top - run Seafront.Run instead"); EditorApplication.Exit(1); return; }
+        }
+        if (trunks.Count != holder.childCount) { Debug.LogError($"[seafront] {trunks.Count} trunks but {holder.childCount} crowns - run Seafront.Run instead"); EditorApplication.Exit(1); return; }
+        var oldC = root.transform.Find(TrunkColliders); if (oldC) Object.DestroyImmediate(oldC.gameObject);
+        int meshColliders = 0;
+        foreach (var t in bark) if (t.TryGetComponent<MeshCollider>(out var mc)) { Object.DestroyImmediate(mc); meshColliders++; }
+        var parent = TrunkColliderRoot(root.transform);
+        foreach (var (foot, top) in trunks) TrunkCapsules(parent, foot, top);
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+        Debug.Log($"[seafront] trunk colliders: {trunks.Count} palms, {parent.childCount} capsules, {meshColliders} mesh colliders removed");
     }
 
     static Vector3 TopOffset(float h, float lean) => new Vector3(0, h, 0) + Vector3.forward * Mathf.Tan(lean * Mathf.Deg2Rad) * h * 0.7f;
