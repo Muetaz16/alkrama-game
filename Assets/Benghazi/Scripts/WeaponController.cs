@@ -140,7 +140,7 @@ public class WeaponController : MonoBehaviour
         quickKnife = false;
         if (switchTo >= 0 && switchTo != current && switchTo < weapons.Length)
         {
-            current = switchTo; reloading = false; vm.SwitchTo(current, quickFrom >= 0); ShowWeapon();
+            current = switchTo; reloading = false; burstCount = 0; vm.SwitchTo(current, quickFrom >= 0); ShowWeapon();
             if (quickFrom >= 0 && current == 2) { nextShot = Time.time + 0.12f; pendingSlash = true; }
         }
         switchTo = -1;
@@ -315,6 +315,7 @@ public class WeaponController : MonoBehaviour
         dir = Quaternion.AngleAxis(-lift, ct.right) * dir;
         // spread: a still, aimed first round goes where the sights are; moving, firing long bursts, a racing
         // heart and hip firing open it up
+        if (Time.time - lastShotT > 0.35f) burstCount = 0;          // a new burst: the last one's spread is gone
         float moving = Mathf.Clamp(player.Speed / PlayerController.JogSpeed, 0, 2);
         float spread = Aiming ? W.aimSpread * (1 + moving * 3f) : W.spread * (1 + moving * 0.6f);
         spread *= (1 + fatigue * 0.8f) * (player.crouch ? 0.7f : 1f);
