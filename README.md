@@ -12,6 +12,8 @@ Built to show investors. Tone: realistic, grounded, Call of Duty / Battlefield f
 
 ## 1. Setup
 
+> Full installation requirements and troubleshooting (in Arabic): **[INSTALL.md](INSTALL.md)**.
+
 | Need | Version / note |
 |---|---|
 | Unity | **6000.6.8f1** (Unity 6) — see `ProjectSettings/ProjectVersion.txt` |
@@ -41,9 +43,13 @@ sign in for them). This has happened many times.
 | WASD / Shift / C / Space | move / sprint (double-tap = tactical sprint) / crouch / jump |
 | Mouse, LMB, RMB | look, fire, aim down sights (sniper: scope) |
 | R | reload (tactical if rounds left, emergency if empty) |
-| **Q / E** | lean left / right (peek round corners) |
+| **Q / E** | lean left / right (peek round corners); a left lean moves the rifle to the left shoulder |
+| **X** | keep the rifle in the left (support-side) shoulder, or bring it back |
+| **Z** | prone (C from prone = up to a knee) |
+| **G** | take a dead fighter's rifle: its rounds go to the AK reserve |
 | 1 / 2 / 3, wheel | AK-47 / sniper (VSS) / knife |
 | F | quick knife |
+| LMB / RMB with the knife | quick cut / committed thrust or reverse-grip stab (contact distance only, about 1 m) |
 | V | first-person ⇄ third-person |
 | Shift while scoped | hold breath |
 | M | drop a map marker (debug) |
@@ -129,7 +135,9 @@ afterwards so the owner's "BEST" kill record starts at 0.
 | `PlayerHealth.cs` | Health, regen, hurt vignette + hit-direction marker, death/respawn, **drowning** (breath bar in deep water), kill counter + saved best (PlayerPrefs). |
 | `Damageable.cs` | Base class for anything that can be shot (targets, enemies). |
 | `PalmSway.cs`, `EnvironmentInit.cs`, `MarkerTool.cs` | Palm crowns in the wind; reflection probe refresh; M-key map marker. |
-| `AutoTest.cs` | The scripted play-test (section 4). |
+| `PlayerBodyPose.cs` | The soldier's own body after the mocap: torso turns with the eyes while the feet stay put, left hand on the handguard, head follows the look, lean and breathing. Starts itself. |
+| `WeaponPickups.cs` | A dead fighter's rifle drops and can be taken with G (random part-used magazine + 0-3 spare ones). Starts itself. |
+| `AutoTest.cs` | The scripted play-test (section 4). Also: an inspection camera beside the weapon (`inspect_*.png`), wrist-reach, trigger-finger and foot-slip measures, `-gaitonly` / `-legacygait` / `-calgait` / `-gaitscale` switches. |
 
 `Assets/Editor/` — the generators listed in section 3, plus `RealCars.cs` (downloaded car models → colour /
 shot-up / burnt variants, LODs) and `ProjectSetup.cs` (package install).

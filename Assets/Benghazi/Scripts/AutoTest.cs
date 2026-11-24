@@ -120,6 +120,33 @@ public class AutoTest : MonoBehaviour
         yield return null;
     }
 
+    // A second camera a hand's breadth to the side of the weapon, for a close look at the hands (trigger
+    // finger, knife grip, the hand on the charging handle) that the player's own view hides behind the gun.
+    // from / at are in the player camera's space.
+    static readonly Vector3 GripFrom = new(0.4f, -0.1f, 0.3f), GripAt = new(0.08f, -0.2f, 0.36f);
+    static readonly Vector3 KnifeFrom = new(0.46f, -0.04f, 0.42f), KnifeAt = new(0.14f, -0.17f, 0.38f);
+    IEnumerator Inspect(string file, Vector3 from, Vector3 at)
+    {
+        yield return new WaitForEndOfFrame();
+        GameObject go = null; RenderTexture rt = null; Texture2D tex = null;
+        try
+        {
+            var main = Camera.main; var mt = main.transform;
+            go = new GameObject("Inspect camera"); var c = go.AddComponent<Camera>();
+            c.CopyFrom(main); c.fieldOfView = 36f; c.nearClipPlane = 0.02f; c.enabled = false;
+            go.transform.position = mt.TransformPoint(from);
+            go.transform.rotation = Quaternion.LookRotation(mt.TransformPoint(at) - go.transform.position, mt.up);
+            rt = new RenderTexture(1280, 720, 24); c.targetTexture = rt; c.Render();
+            RenderTexture.active = rt; tex = new Texture2D(1280, 720, TextureFormat.RGB24, false);
+            tex.ReadPixels(new Rect(0, 0, 1280, 720), 0, 0); tex.Apply(); RenderTexture.active = null;
+            File.WriteAllBytes(Path.Combine(outDir, file), tex.EncodeToPNG());
+            c.targetTexture = null;
+        }
+        catch (System.Exception e) { log.WriteLine($"inspect {file}: failed ({e.Message})"); }
+        if (rt) Destroy(rt); if (tex) Destroy(tex); if (go) Destroy(go);
+        yield return null;
+    }
+
     // point the camera at a world position
     void LookAt(Vector3 p)
     {
@@ -145,17 +172,27 @@ public class AutoTest : MonoBehaviour
         yield return new WaitForSeconds(0.3f);
         yield return Shot("fp_rifle_hip.png");
         log.WriteLine("right shoulder: " + gun.View.ArmsDebug());
+        yield return Inspect("inspect_grip_ready.png", GripFrom, GripAt);
+        log.WriteLine("ready, " + gun.View.TriggerDebug());
+        log.WriteLine(gun.View.HandleDebug());
         gun.aimHeld = true;
         yield return new WaitForSeconds(0.6f);
         LookAt(near.transform.position + Vector3.up * 0.55f);
         yield return null;
         yield return Shot("fp_rifle_ads.png");
+        yield return Inspect("inspect_grip_trigger.png", new Vector3(0.36f, -0.1f, 0.2f), new Vector3(0.0f, -0.135f, 0.24f));
+        log.WriteLine("aiming, " + gun.View.TriggerDebug());
         int before = gun.hits;
         gun.fireHeld = true;
         yield return new WaitForSeconds(0.25f);
         yield return Shot("fp_rifle_fire.png");
         yield return new WaitForSeconds(0.35f);
         gun.fireHeld = false; gun.aimHeld = false;
+        // straight after the burst the rifle is back at the ready with the finger still on the trigger: the side
+        // view shows which part of the finger is on it
+        yield return new WaitForSeconds(0.22f);
+        yield return Inspect("inspect_finger_on_trigger.png", GripFrom, GripAt);
+        log.WriteLine("after the burst, " + gun.View.TriggerDebug());
         log.WriteLine($"rifle burst at {Vector3.Distance(near.transform.position, player.transform.position):F0} m: {gun.hits - before} hits, mag {gun.W.mag}");
         yield return new WaitForSeconds(0.4f);
         // reload: the magazine comes out and a new one goes in
@@ -173,15 +210,20 @@ public class AutoTest : MonoBehaviour
         log.WriteLine($"tactical reload: tactical {gun.LastReloadTactical}, mag {before2} -> {gun.W.mag}, reserve {gun.W.reserve}");
         // emergency reload (empty): old mag drops, fresh one in, charging handle racked
         gun.W.mag = 0; gun.reloadPressed = true;
-        yield return new WaitForSeconds(0.5f);
+        float r0 = Time.time, rlen = gun.W.reloadTime * 0.95f;
+        IEnumerator Until(float u) { while (Time.time - r0 < rlen * u) yield return null; }
+        yield return Until(0.22f);
         yield return Shot("fp_reload_draw.png");                // the fresh mag coming up from the chest rig
-        yield return new WaitForSeconds(0.32f);
-        yield return Shot("fp_reload_drop.png");
-        yield return new WaitForSeconds(0.6f);
-        yield return Shot("fp_reload_handle.png");              // hand on the charging handle
-        yield return new WaitForSeconds(0.1f);
+        yield return Until(ViewModel.ReloadStripAt);
+        yield return Shot("fp_reload_drop.png");                // the fresh mag knocks the empty one out
+        yield return Until(ViewModel.ReloadUnderAt);
+        yield return Shot("fp_reload_under.png");               // hand passing under the rifle
+        yield return Until(ViewModel.ReloadRackAt - 0.05f);
+        yield return Shot("fp_reload_handle.png");              // hand on the charging handle, from underneath
+        yield return Inspect("inspect_rack.png", new Vector3(0.5f, -0.02f, 0.34f), new Vector3(0.07f, -0.13f, 0.4f));
+        yield return Until(ViewModel.ReloadRackAt);
         yield return Shot("fp_reload_rack.png");                // handle to the rear
-        yield return new WaitForSeconds(0.85f);
+        yield return Until(1.12f);
         log.WriteLine($"emergency reload: tactical {gun.LastReloadTactical}, mag 0 -> {gun.W.mag}, dropped mags on the ground {GameObject.FindObjectsByType<Transform>(FindObjectsSortMode.None).Length > 0 && GameObject.Find("Dropped mag") != null}");
         // leaning out right, then left
         player.leanInput = 1f; yield return new WaitForSeconds(0.5f);
@@ -243,29 +285,44 @@ public class AutoTest : MonoBehaviour
         log.WriteLine($"sniper at {Vector3.Distance(far.transform.position, player.transform.position):F0} m: {gun.hits - before} hits");
         gun.fireHeld = false;
         yield return new WaitForSeconds(0.8f);
-        // knife: walk up to the near target and slash it
+        // knife: contact distance only. First from two metres (must not reach), then in close: each attack
+        // in turn, both grips, with a side view of the hand at the moment of contact
         var cc = player.GetComponent<CharacterController>();
         var tp = near.transform.position; var toMe = Vector3.ProjectOnPlane(player.transform.position - tp, Vector3.up).normalized;
-        cc.enabled = false; player.transform.position = new Vector3(tp.x, player.transform.position.y, tp.z) + toMe * 1.4f; cc.enabled = true;
+        void StandAt(float d) { cc.enabled = false; player.transform.position = new Vector3(tp.x, player.transform.position.y, tp.z) + toMe * d; cc.enabled = true; }
+        StandAt(2.0f);
         gun.switchTo = 2;
-        yield return new WaitForSeconds(0.6f);
+        yield return new WaitForSeconds(0.7f);
         LookAt(near.transform.position + Vector3.up * 0.55f);
         yield return null;
         yield return Shot("fp_knife.png");
-        before = gun.knifeHits;
-        gun.fireHeld = true;
-        yield return new WaitForSeconds(0.17f);
-        yield return Shot("fp_knife_slash.png");
-        yield return new WaitForSeconds(0.6f);
-        log.WriteLine($"knife slash: {gun.knifeHits - before} hits");
-        yield return new WaitForSeconds(3.2f);                 // let the target stand up again
-        before = gun.knifeHits;
-        LookAt(near.transform.position + Vector3.up * 0.55f);
-        gun.aimHeld = true; yield return null; gun.aimHeld = false;
+        yield return Inspect("inspect_knife_grip.png", KnifeFrom, KnifeAt);
+        before = gun.knifeHits; gun.forceKnife = ViewModel.CutAcross; gun.fireHeld = true;
+        yield return new WaitForSeconds(0.8f);
+        log.WriteLine($"knife from 2.0 m: {gun.knifeHits - before} hits (must be 0: a knife needs contact distance)");
+        StandAt(0.9f);
         yield return new WaitForSeconds(0.3f);
-        yield return Shot("fp_knife_stab.png");
-        yield return new WaitForSeconds(0.5f);
-        log.WriteLine($"knife stab: {gun.knifeHits - before} hits");
+        var names = new[] { "cut across", "cut down", "thrust", "stab down (reverse grip)", "rip back (reverse grip)" };
+        var files = new[] { "fp_knife_slash.png", "fp_knife_cutdown.png", "fp_knife_stab.png", "fp_knife_stabdown.png", "fp_knife_rip.png" };
+        int landed = 0;
+        for (int kind = 0; kind < 5; kind++)
+        {
+            LookAt(near.transform.position + Vector3.up * 0.55f);
+            before = gun.knifeHits; gun.forceKnife = kind;
+            if (ViewModel.Heavy(kind)) { gun.aimHeld = true; yield return null; gun.aimHeld = false; } else gun.fireHeld = true;
+            float len = ViewModel.KnifeTime(kind);
+            yield return new WaitForSeconds(len * 0.3f);
+            if (kind >= ViewModel.StabDown) yield return Inspect($"inspect_knife_reverse_{kind}.png", KnifeFrom + new Vector3(0, 0.1f, 0), KnifeAt + new Vector3(-0.03f, 0.12f, -0.04f));
+            yield return new WaitForSeconds(len * 0.16f);
+            yield return Shot(files[kind]);
+            yield return new WaitForSeconds(len * 0.6f);
+            int got = gun.knifeHits - before; landed += got > 0 ? 1 : 0;
+            log.WriteLine($"knife {names[kind]}: {got} hits (attack played: {gun.View.LastKnife})");
+            if (kind == 0) log.WriteLine($"knife slash: {got} hits");
+            if (kind == 2) log.WriteLine($"knife stab: {got} hits");
+            yield return new WaitForSeconds(3.3f);             // let the target stand up again
+        }
+        log.WriteLine($"knife: {landed} of 5 attacks landed at 0.9 m");
         gun.switchTo = 0;
         yield return new WaitForSeconds(0.6f);
         log.Flush();

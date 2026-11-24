@@ -16,15 +16,18 @@ public class ViewModel : MonoBehaviour
     Transform root;
     readonly Transform[] holder = new Transform[3], model = new Transform[3], mag = new Transform[3], bolt = new Transform[3],
         handle = new Transform[3], muzzle = new Transform[3], eject = new Transform[3], flash = new Transform[3];
-    readonly Vector3[] sight = new Vector3[3], magHome = new Vector3[3], boltHome = new Vector3[3];
+    readonly Vector3[] sight = new Vector3[3], magHome = new Vector3[3], boltHome = new Vector3[3], handleAt = new Vector3[3];
     Renderer[][] renderers = new Renderer[3][];
 
     // hip poses (camera space) and how far in front of the eye the sight sits when aiming
-    static readonly Vector3[] HipPos = { new(0.115f, -0.155f, 0.31f), new(0.12f, -0.165f, 0.31f), new(0.15f, -0.17f, 0.36f) };
-    static readonly Vector3[] HipRot = { new(0.5f, -3f, 2.5f), new(0.5f, -3f, 2.5f), new(-28f, -14f, -22f) };
+    // Shouldered ready: the fighter stands square to the threat and the stock sits in the shoulder pocket
+    // under the cheek, so the rifle runs almost straight out from under the eye - not canted across the
+    // body with the butt out past the shoulder.
+    static readonly Vector3[] HipPos = { new(0.078f, -0.15f, 0.32f), new(0.08f, -0.158f, 0.32f), new(0.15f, -0.17f, 0.36f) };
+    static readonly Vector3[] HipRot = { new(0.5f, -0.8f, 1f), new(0.5f, -0.8f, 1f), new(-24f, -12f, -18f) };
     static readonly float[] AdsDist = { 0.27f, 0.05f, 0f };
     float AdsDistance(int w) => w == AK && GunFactory.RealAK ? 0.21f : AdsDist[w];      // iron sights sit closer to the eye than a red dot
-    Vector3 Hip(int w) => w == AK && GunFactory.RealAK ? new Vector3(0.112f, -0.158f, 0.335f) : HipPos[w];   // the real AK's stock is long: hold it further out
+    Vector3 Hip(int w) => w == AK && GunFactory.RealAK ? new Vector3(0.076f, -0.152f, 0.34f) : HipPos[w];   // the real AK's stock is long: hold it further out
 
     public int Shown { get; private set; }
     public float aimT;                       // 0 hip .. 1 aiming, set by the weapon
@@ -63,7 +66,12 @@ public class ViewModel : MonoBehaviour
             muzzle[i] = GunFactory.Find(model[i], "Muzzle"); eject[i] = GunFactory.Find(model[i], "Eject");
             var s = GunFactory.Find(model[i], "Sight"); sight[i] = s ? s.localPosition : Vector3.zero;
             if (mag[i]) magHome[i] = mag[i].localPosition;
-            if (bolt[i]) boltHome[i] = bolt[i].localPosition;
+            if (bolt[i])
+            {
+                boltHome[i] = bolt[i].localPosition;
+                var hmf = bolt[i].GetComponentInChildren<MeshFilter>();
+                handleAt[i] = hmf && hmf.sharedMesh ? bolt[i].InverseTransformPoint(hmf.transform.TransformPoint(hmf.sharedMesh.bounds.center)) : Vector3.zero;
+            }
             if (i != Knife) flash[i] = BuildFlash(muzzle[i]);
             if (i != Knife && mag[i])
             {
@@ -117,8 +125,9 @@ public class ViewModel : MonoBehaviour
     static float rockSign;
     public bool TacticalReload => tacReload;
     // reload timeline (fractions of the whole reload); the sounds in Update() use the same numbers
-    const float RHandOff = 0.02f, RAtPouch = 0.13f, RMagOut = 0.15f, RBehind = 0.32f, RStrip = 0.39f, RLug = 0.47f, RSeated = 0.54f,
-        ROnHandle = 0.64f, RPull = 0.66f, RBack = 0.73f, RHome = 0.755f, RHandBack = 0.78f;
+    const float RHandOff = 0.02f, RAtPouch = 0.13f, RMagOut = 0.15f, RBehind = 0.32f, RStrip = 0.38f, RLug = 0.45f, RSeated = 0.52f,
+        RUnder = 0.6f, ROnHandle = 0.67f, RPull = 0.69f, RBack = 0.755f, RHome = 0.78f, RHandBack = 0.8f, RUnderBack = 0.88f;
+    public string HandleDebug() { int w = Shown; return bolt[w] ? $"charging handle in gun space {model[w].InverseTransformPoint(bolt[w].TransformPoint(handleAt[w])):F3}, grip {gripR[w]:F3}" : "no bolt"; }
     public string ReloadDebug()
     {
         int w = Shown; var ct = cam.transform;
@@ -158,17 +167,19 @@ public class ViewModel : MonoBehaviour
     void ReloadPose(int w, float u, float a, ref Vector3 pos, ref Vector3 rot)
     {
         bool tac = tacReload; float side = WorkSide;
-        // rifle into the workspace: stock stays in the shoulder, muzzle up a little, magwell rolled to the
-        // working hand; the eyes stay on the threat
-        float work = Sm(u, 0f, 0.1f) * (1 - Sm(u, tac ? 0.66f : 0.82f, tac ? 0.86f : 0.98f));
-        pos += new Vector3(-0.04f, 0.035f, -0.09f) * work * (1 - a * 0.5f); rot += new Vector3(-8f, 6f, -24f) * work;
+        // The firing hand never leaves the grip and the rifle stays in the shoulder, on the target: only a
+        // small lift and roll of the magwell towards the working hand while the magazines change.
+        float work = Sm(u, 0f, 0.1f) * (1 - Sm(u, tac ? 0.66f : RSeated + 0.02f, tac ? 0.86f : RUnder + 0.04f));
+        pos += new Vector3(-0.012f, 0.012f, -0.03f) * work * (1 - a * 0.5f); rot += new Vector3(-3f, 2.5f, -9f) * work;
         float back = 0;
         if (!tac)
         {
-            // rifle rolled inboard so the working hand comes over the top onto the charging handle; one
-            // full pull to the rear and let it go (never ride it forward); the rifle rocks with the pull
-            float rk = Sm(u, 0.55f, ROnHandle) * (1 - Sm(u, RHandBack, 0.9f)) * Mathf.Clamp01(shoulderT);
-            rot += new Vector3(-4f, -6f, 34f) * rk; pos += new Vector3(0.012f, 0.014f, -0.008f) * rk;
+            // Then the working hand goes UNDER the rifle to the charging handle on the far side, while the
+            // rifle is canted about twenty degrees outboard (top away from the working hand) so the handle
+            // comes down to meet it; one full pull to the rear and let it go (never ride it forward), and
+            // the hand goes back the way it came, under the rifle, to the handguard. The rifle rocks with the pull.
+            float rk = Sm(u, RSeated + 0.02f, ROnHandle) * (1 - Sm(u, RHandBack, RUnderBack + 0.04f)) * Mathf.Clamp01(shoulderT * 2f);
+            rot += new Vector3(-1.5f, 1.5f, -20f) * rk; pos += new Vector3(-0.006f, 0.008f, -0.006f) * rk;
             float pull = Mathf.InverseLerp(RPull, RBack, u); pull = pull * pull * (3 - 2 * pull);
             back = pull * (1 - Mathf.InverseLerp(RBack, RHome, u));
             pos += new Vector3(0, 0, -0.014f) * back; rot += new Vector3(-1.5f, 0, 0) * back;
@@ -212,9 +223,11 @@ public class ViewModel : MonoBehaviour
         }
         else
         {
-            if (u < ROnHandle) { lhA = 2; lhB = 4; lhK = Sm(u, RSeated, ROnHandle); }
+            if (u < RUnder) { lhA = 2; lhB = 5; lhK = Sm(u, RSeated, RUnder); }                 // lets go of the seated mag, drops under the rifle
+            else if (u < ROnHandle) { lhA = 5; lhB = 4; lhK = Sm(u, RUnder, ROnHandle); }        // up the far side onto the handle
             else if (u < RHandBack) { lhA = lhB = 4; lhK = 0; }
-            else { lhA = 4; lhB = 0; lhK = Sm(u, RHandBack, 0.93f); }
+            else if (u < RUnderBack) { lhA = 4; lhB = 5; lhK = Sm(u, RHandBack, RUnderBack); }   // back the way it came
+            else { lhA = 5; lhB = 0; lhK = Sm(u, RUnderBack, 0.97f); }
         }
     }
 
@@ -234,11 +247,25 @@ public class ViewModel : MonoBehaviour
         Destroy(go, 25f);
     }
 
-    public void KnifeAttack(bool heavy)
+    // Knife work. Two grips:
+    //   forward (hammer) grip - blade out of the thumb side: horizontal cuts, a downward diagonal cut, a straight thrust
+    //   reverse (ice-pick) grip - blade out of the little-finger side, edge out: the overhand stab downwards
+    //   and a backhand rip. The knife is turned in the hand during the wind-up and turned back afterwards.
+    // The weapon picks the attack from what is in front (see WeaponController.Knife).
+    public const int CutAcross = 0, CutDown = 1, Thrust = 2, StabDown = 3, RipBack = 4;
+    static readonly float[] KnifeLen = { 0.42f, 0.5f, 0.6f, 0.72f, 0.6f }, KnifeHitAt = { 0.4f, 0.46f, 0.48f, 0.52f, 0.5f };
+    static bool ReverseGrip(int kind) => kind >= StabDown;
+    public static bool Heavy(int kind) => kind >= Thrust;
+    public static float KnifeTime(int kind) => KnifeLen[kind];
+    public int LastKnife => knifeKind;
+    int knifeKind; float reverseT;
+    public void KnifeAttack(int kind)
     {
-        knifeAnim.side = heavy ? 1 : -knifeAnim.side;
-        heavyKnife = heavy;
-        Play(knifeAnim, Knife, heavy ? 0.62f : 0.42f);
+        knifeKind = Mathf.Clamp(kind, 0, 4);
+        knifeAnim.side = knifeKind == CutAcross ? -knifeAnim.side : 1;
+        if (knifeAnim.side == 0) knifeAnim.side = 1;
+        heavyKnife = Heavy(knifeKind);
+        Play(knifeAnim, Knife, KnifeLen[knifeKind]);
         onSound?.Invoke("swish");
     }
     bool heavyKnife;
@@ -291,6 +318,13 @@ public class ViewModel : MonoBehaviour
     // knife
     static readonly Key[] Slash = { Zero0, K(0.28f, 0.05f, 0.07f, -0.04f, -30, 22, 48, 1), K(0.52f, -0.17f, -0.07f, 0.08f, 22, -58, -38, 3), K(0.64f, -0.18f, -0.08f, 0.06f, 26, -62, -42, 1), Zero1 };
     static readonly Key[] Stab = { Zero0, K(0.35f, 0.0f, 0.03f, -0.09f, -6, 8, -75, 1), K(0.5f, -0.07f, 0.035f, 0.23f, -2, 12, -80, 3), K(0.64f, -0.07f, 0.035f, 0.22f, -2, 12, -80), Zero1 };
+    // downward diagonal cut: up by the shoulder, down across the body
+    static readonly Key[] SlashDown = { Zero0, K(0.3f, 0.03f, 0.13f, -0.06f, -42, 14, 34, 1), K(0.5f, -0.13f, -0.1f, 0.09f, 34, -38, -30, 3), K(0.63f, -0.14f, -0.11f, 0.07f, 37, -41, -33, 1), Zero1 };
+    // reverse grip, overhand: fist up beside the head, driven down and in
+    static readonly Key[] StabDownKeys = { Zero0, K(0.36f, -0.03f, 0.19f, -0.1f, -58, -4, 12, 1), K(0.52f, -0.07f, -0.08f, 0.17f, 46, 6, 4, 3), K(0.66f, -0.07f, -0.09f, 0.16f, 48, 6, 4), Zero1 };
+    // reverse grip, backhand rip: across from the support side
+    static readonly Key[] RipBackKeys = { Zero0, K(0.34f, -0.2f, 0.06f, -0.03f, -10, -46, 20, 1), K(0.5f, 0.05f, 0.02f, 0.12f, 4, 34, -18, 3), K(0.63f, 0.06f, 0.02f, 0.11f, 5, 37, -20, 1), Zero1 };
+    static Key[] KnifeKeys(int kind) => kind == CutDown ? SlashDown : kind == Thrust ? Stab : kind == StabDown ? StabDownKeys : kind == RipBack ? RipBackKeys : Slash;
     static readonly Key[] Lower = { Zero0, K(1, 0, -0.22f, -0.05f, 40, 0, -10, 2) };
     static readonly Key[] Raise = { K(0, 0, -0.22f, -0.05f, 40, 0, -10), K(0.75f, 0, 0.005f, 0.002f, -3, 0, 1, 1), Zero1 };
 
@@ -312,7 +346,7 @@ public class ViewModel : MonoBehaviour
             if (boltAnim.fired == 1 && u > 0.42f) { boltAnim.fired = 2; onEject?.Invoke(); }
             if (boltAnim.fired == 2 && u > 0.62f) { boltAnim.fired = 3; onSound?.Invoke("boltfwd"); }
         }
-        if (Playing(knifeAnim) && knifeAnim.fired == 0 && U(knifeAnim) > (heavyKnife ? 0.48f : 0.4f)) { knifeAnim.fired = 1; onKnifeHit?.Invoke(heavyKnife); }
+        if (Playing(knifeAnim) && knifeAnim.fired == 0 && U(knifeAnim) > KnifeHitAt[knifeKind]) { knifeAnim.fired = 1; onKnifeHit?.Invoke(heavyKnife); }
         // weapon switch: lower, swap, raise
         if (switching)
         {
@@ -328,6 +362,7 @@ public class ViewModel : MonoBehaviour
     }
 
     static readonly float[] EvTac = { RBehind + 0.02f, RSeated - 0.01f, 0.7f }, EvEmpty = { RBehind + 0.02f, RSeated - 0.01f, RPull + 0.01f, RHome };
+    public const float ReloadRackAt = RBack - 0.01f, ReloadUnderAt = RUnder, ReloadStripAt = RStrip - 0.01f;      // for the test's screenshots
     static readonly string[] NmTac = { "magout", "magin", "boltfwd" }, NmEmpty = { "magout", "magin", "boltback", "boltfwd" };
 
     void LateUpdate()
@@ -415,7 +450,7 @@ public class ViewModel : MonoBehaviour
         }
         if (Playing(knifeAnim) && w == Knife)
         {
-            Eval(heavyKnife ? Stab : Slash, U(knifeAnim), out p, out r);
+            Eval(KnifeKeys(knifeKind), U(knifeAnim), out p, out r);
             float s = knifeAnim.side;
             pos += new Vector3(p.x * s, p.y, p.z); rot += new Vector3(r.x, r.y * s, r.z * s);
         }
@@ -490,10 +525,12 @@ public class ViewModel : MonoBehaviour
     struct Grip
     {
         public Vector3 wrist, pole; public Quaternion rot; public float i, m, r, l, t;
+        public Vector3 pad; public float padW;          // where the pad of the index finger goes (trigger / along the frame), and how much
         public static Grip Mix(Grip a, Grip b, float k) => new Grip
         {
             wrist = Vector3.Lerp(a.wrist, b.wrist, k), pole = Vector3.Lerp(a.pole, b.pole, k), rot = Quaternion.Slerp(a.rot, b.rot, k),
-            i = Mathf.Lerp(a.i, b.i, k), m = Mathf.Lerp(a.m, b.m, k), r = Mathf.Lerp(a.r, b.r, k), l = Mathf.Lerp(a.l, b.l, k), t = Mathf.Lerp(a.t, b.t, k)
+            i = Mathf.Lerp(a.i, b.i, k), m = Mathf.Lerp(a.m, b.m, k), r = Mathf.Lerp(a.r, b.r, k), l = Mathf.Lerp(a.l, b.l, k), t = Mathf.Lerp(a.t, b.t, k),
+            pad = a.padW > 0 && b.padW > 0 ? Vector3.Lerp(a.pad, b.pad, k) : a.padW > 0 ? a.pad : b.pad, padW = Mathf.Lerp(a.padW, b.padW, k)
         };
     }
     // a hand's attitude from two things you can see on it: where the fingers point and the knuckle line (little -> index)
@@ -561,15 +598,25 @@ public class ViewModel : MonoBehaviour
     {
         var gm = model[w]; var ct = cam.transform; Vector3 f = gm.forward, u = gm.up, rs = gm.right * s;
         Vector3 fingers = f * 0.85f - rs * 0.35f, across = u * 0.9f + f * 0.25f;
+        // Trigger finger. Off the trigger it lies straight along the frame above the trigger guard. On it,
+        // only the pad of the first joint (the fingertip pad, between the tip and the first crease) touches
+        // the trigger - never the middle of the finger: that is what lets the trigger come straight back
+        // without pushing the muzzle sideways. Both are points on the rifle the fingertip is taken to.
+        var g0 = gm.TransformPoint(gripR[w]);
+        var onFrame = g0 + f * 0.088f + u * 0.076f + rs * 0.019f;         // on the receiver, above the trigger guard
+        var onTrigger = g0 + f * 0.07f + u * 0.06f - rs * 0.003f;         // the face of the trigger blade, inside the guard
         return new Grip
         {
-            wrist = gm.TransformPoint(gripR[w]) - fingers.normalized * 0.062f + rs * 0.028f + u * 0.02f, rot = Basis(fingers, across),
+            // a high grip: the web of the hand up under the receiver, far enough back that the index finger
+            // reaches the trigger with its pad instead of wrapping past it
+            wrist = g0 - fingers.normalized * 0.062f + rs * 0.028f + u * 0.032f - f * 0.022f, rot = Basis(fingers, across),
             pole = -ct.up + ct.right * 0.7f * s - ct.forward * 0.2f,
-            i = Mathf.Lerp(0.06f, 0.5f, trigT), m = 0.9f, r = 0.95f, l = 1f, t = 0.55f
+            i = 0.05f, m = 0.9f, r = 0.95f, l = 1f, t = 0.55f,
+            pad = Vector3.Lerp(onFrame, onTrigger, Mathf.SmoothStep(0, 1, trigT)), padW = 1
         };
     }
 
-    // the support hand, and during a reload the working hand (kind: 0 handguard, 1 pouch, 2 fresh mag, 3 old mag, 4 charging handle)
+    // the support hand, and during a reload the working hand (kind: 0 handguard, 1 pouch, 2 fresh mag, 3 old mag, 4 charging handle, 5 passing under the rifle)
     Grip Support(int w, float s, int kind)
     {
         var gm = model[w]; var ct = cam.transform; Vector3 f = gm.forward, u = gm.up, rs = gm.right * s;
@@ -592,11 +639,19 @@ public class ViewModel : MonoBehaviour
         }
         else if (kind == 4)
         {
-            // over the receiver, palm to the rear, fingers hooked in front of the charging handle
-            var hd = (handle[w] ? handle[w] : bolt[w] ? bolt[w] : gm).position + gm.right * 0.022f - f * 0.085f * rackLag + u * 0.03f * rackLag;
-            Vector3 fingers = rs * 0.82f - u * 0.5f;
-            g.wrist = hd - fingers.normalized * 0.085f + f * 0.02f + u * 0.01f; g.rot = Basis(fingers, u + f * 0.2f);
-            g.i = 0.6f; g.m = 0.65f; g.r = 0.7f; g.l = 0.7f; g.t = 0.2f;
+            // come up from under the rifle on the handle's side: hand upright beside the receiver, palm to
+            // the rifle, the first two fingers hooked over the charging handle from in front
+            var hd = (handle[w] ? handle[w].position : bolt[w] ? bolt[w].TransformPoint(handleAt[w]) : gm.position) + gm.right * 0.012f - f * 0.085f * rackLag - u * 0.03f * rackLag;
+            Vector3 fingers = u * 0.9f - gm.right * 0.25f + f * 0.1f;
+            g.wrist = hd - fingers.normalized * 0.08f + gm.right * 0.03f + f * 0.012f; g.rot = Basis(fingers, f * s);
+            g.i = 0.75f; g.m = 0.75f; g.r = 0.6f; g.l = 0.55f; g.t = 0.25f;
+        }
+        else if (kind == 5)
+        {
+            // on the way under the rifle: below the magazine, hand open, turning palm-up
+            Vector3 fingers = gm.right * 0.75f * s + f * 0.35f + u * 0.2f;
+            g.wrist = gm.TransformPoint(magCentre[w]) - u * 0.2f - rs * 0.05f + f * 0.02f; g.rot = Basis(fingers, f * 0.8f - u * 0.3f);
+            g.i = g.m = g.r = g.l = 0.3f; g.t = 0.15f;
         }
         else
         {
@@ -626,9 +681,11 @@ public class ViewModel : MonoBehaviour
         arms.rotation = ct.rotation;
         var line = ct.InverseTransformVector(arm[1][0].position - arm[0][0].position);
         float blade = Mathf.Atan2(line.z, -line.x) * Mathf.Rad2Deg;
-        if (w != Knife && k < 0.999f) arms.rotation = ct.rotation * Quaternion.Euler(0, -2f * blade * (1 - k), 0);
+        // the mocap pose is bladed (support shoulder forward): turn the body so both shoulders are square to
+        // the target, the same from either shoulder
+        arms.rotation = ct.rotation * Quaternion.Euler(0, -blade, 0);
         var mid = (arm[0][0].position + arm[1][0].position) * 0.5f;
-        arms.position += ct.position + ct.rotation * new Vector3(0, -0.34f, 0.03f) - mid;   // body well under the view
+        arms.position += ct.position + ct.rotation * new Vector3(0, -0.34f, 0.105f) - mid;  // body well under the view
 
         // finger on the trigger only when the rifle is on a target or firing
         bool onTarget = aimT > 0.6f || Time.time - lastFireT < 0.45f;
@@ -642,13 +699,25 @@ public class ViewModel : MonoBehaviour
             // into the fist (handle through it, blade out of the index side)
             var hf = holder[w]; Vector3 hfF = hf.forward, hfU = hf.up, hfR = hf.right;
             Vector3 kf = hfF * 0.85f - hfR * 0.35f, ka = hfU * 0.9f + hfF * 0.25f;
-            Place(0, new Grip { wrist = hf.position - kf.normalized * 0.07f, rot = Basis(kf, ka), pole = -ct.up + ct.right * 0.7f - ct.forward * 0.2f, i = 1, m = 1, r = 1, l = 1, t = 1 });
+            // which grip: the knife is turned in the hand during the wind-up of a reverse-grip attack and
+            // turned back as the arm recovers
+            bool attacking = Playing(knifeAnim); float ku = attacking ? U(knifeAnim) : 1;
+            float wantRev = attacking && ReverseGrip(knifeKind) && ku < 0.8f ? 1 : 0;
+            reverseT = Mathf.MoveTowards(reverseT, wantRev, dt / 0.13f);
+            float rv = Mathf.SmoothStep(0, 1, reverseT), turning = Mathf.Sin(rv * Mathf.PI);
+            // a full, hard fist: the handle is locked by the last three fingers, the index closes round it under
+            // the guard; forward grip the thumb lies along the spine side, reverse grip it caps the pommel.
+            // While the knife turns the fingers open just enough to let it through.
+            float open = turning * 0.35f, sq = attacking ? 1f : 0.94f;
+            Place(0, new Grip { wrist = hf.position - kf.normalized * 0.07f, rot = Basis(kf, ka), pole = -ct.up + ct.right * 0.7f - ct.forward * 0.2f,
+                i = (0.96f - open) * sq, m = (1f - open) * sq, r = 1f * sq - open * 0.5f, l = 1f * sq - open * 0.3f, t = Mathf.Lerp(0.72f, 1f, rv) - open });
             if (midH[0] && idxH[0] && litH[0])
             {
                 var h = arm[0][2]; Vector3 aF = (midH[0].position - h.position).normalized, aA = (idxH[0].position - litH[0].position).normalized;
                 var palm = Vector3.Cross(aF, aA).normalized;
                 var centre = midH[0].position + palm * 0.03f - aF * 0.012f;
-                gm.SetPositionAndRotation(centre, Quaternion.LookRotation(aA, -palm));
+                // blade out of the thumb side (forward grip); half a turn about the palm puts it out of the little-finger side
+                gm.SetPositionAndRotation(centre, Quaternion.AngleAxis(180f * rv, palm) * Quaternion.LookRotation(aA, -palm));
             }
             return;
         }
@@ -674,6 +743,31 @@ public class ViewModel : MonoBehaviour
         Vector3 cF = (midH[h].position - hand.position).normalized, cA = (idxH[h].position - litH[h].position).normalized;
         hand.rotation = g.rot * Quaternion.Inverse(Quaternion.LookRotation(cF, Vector3.Cross(cF, cA))) * hand.rotation;
         Curl(h, g.i, g.m, g.r, g.l, g.t);
+        padMiss[h] = -1;
+        if (g.padW > 0.01f) IndexPad(h, g.pad, g.padW);
+    }
+
+    // Take the pad of the index finger to a point: the finger is a two-bone chain (first and second
+    // phalanx) bent the way a finger bends - middle knuckle out towards the back of the hand - with the
+    // last phalanx left almost straight so it is the flat of the pad that arrives, not the tip or a crease.
+    readonly float[] padMiss = { -1, -1 };
+    public string TriggerDebug() => $"index pad to its point: right {(padMiss[0] < 0 ? "-" : (padMiss[0] * 1000).ToString("F0") + " mm")}, left {(padMiss[1] < 0 ? "-" : (padMiss[1] * 1000).ToString("F0") + " mm")}, on trigger {trigT:F2}";
+    void IndexPad(int h, Vector3 target, float weight)
+    {
+        var f = fing[h][0]; if (!f[0] || !f[1] || !f[2]) return;
+        var hand = arm[h][2];
+        Vector3 aF = (midH[h].position - hand.position).normalized, axis = (idxH[h].position - litH[h].position).normalized;
+        var palm = Vector3.Cross(aF, axis).normalized * (h == 0 ? 1 : -1);
+        float l3 = (f[2].position - f[1].position).magnitude * 0.78f;                       // last phalanx is a little shorter than the one before it
+        // the last joint sits behind the pad: half the last phalanx back along the finger, a little off the surface
+        var toward = (target - f[0].position).normalized;
+        var joint = target - toward * (l3 * 0.5f) - palm * 0.004f;
+        joint = Vector3.Lerp(f[2].position, joint, weight);
+        TwoBone(f[0], f[1], f[2], joint, -palm);
+        // last phalanx: laid along the line to the pad, with the slight natural curl
+        var want = (target - f[2].position); var cur = f[2].position - f[1].position;
+        if (want.sqrMagnitude > 1e-8f) f[2].rotation = Quaternion.Slerp(Quaternion.identity, Quaternion.FromToRotation(cur, want), 0.6f * weight) * f[2].rotation;
+        padMiss[h] = Vector3.Distance(f[2].position + (f[2].position - f[1].position).normalized * (l3 * 0.5f), target);
     }
 
     // curl the fingers of a hand towards its palm (0 open .. 1 a closed fist); the thumb folds across them

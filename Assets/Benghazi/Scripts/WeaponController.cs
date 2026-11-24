@@ -26,7 +26,7 @@ public class WeaponController : MonoBehaviour
     {
         new Weapon { name = "AK-47", auto = true, rpm = 600, damage = 34, spread = 1.1f, aimSpread = 0.06f, recoil = 0.9f, range = 450, muzzleVelocity = 715, magSize = 30, reserve = 180, reloadTime = 2.4f, aimFov = 50 },
         new Weapon { name = "SNIPER", auto = false, rpm = 45, damage = 120, spread = 4f, aimSpread = 0.012f, recoil = 4f, range = 1200, muzzleVelocity = 850, magSize = 5, reserve = 30, reloadTime = 2.7f, aimFov = 11, scope = true },
-        new Weapon { name = "KNIFE", melee = true, rpm = 140, damage = 100, range = 2.3f },
+        new Weapon { name = "KNIFE", melee = true, rpm = 140, damage = 100, range = 1.05f },          // a knife works at contact distance: an arm and a blade, no more
     };
     public int current;
     public bool externalInput;                       // AutoTest drives these
@@ -76,6 +76,7 @@ public class WeaponController : MonoBehaviour
         rightHand = anim.GetBoneTransform(HumanBodyBones.RightHand);
         chest = anim.GetBoneTransform(HumanBodyBones.Chest) ?? anim.GetBoneTransform(HumanBodyBones.Spine);
         foreach (var w in weapons) w.mag = w.magSize;
+        weapons[2].range = 1.05f;        // the weapon table is stored in the scene: contact distance for the knife, whatever is saved there
 
         // third-person guns in the hand: the new models replace the old block rifle
         rifle = transform.GetComponentsInChildren<Transform>(true).FirstOrDefaultByName("Rifle");
@@ -336,11 +337,38 @@ public class WeaponController : MonoBehaviour
     string lastShot = "";
 
     // ---------- knife ----------
+    // Which attack: decided by what is in front and where the eyes are, with chance in it so two attacks in
+    // a row are not the same. Quick (fire): cuts. Committed (aim button): thrusts and reverse-grip stabs.
+    //   a man standing close in front       cut across, or a downward diagonal cut; committed: straight thrust
+    //   looking down / a man kneeling, low  downward cut; committed: reverse grip, overhand stab down
+    //   someone at the side of the view     backhand rip in the reverse grip
+    int lastKnife = -1;
     void Knife(bool heavy)
     {
-        vm.KnifeAttack(heavy);
-        nextShot = Time.time + (heavy ? 0.66f : 0.44f);
+        var ct = cam.transform; bool low = camRig.pitch > 18f, side = false;
+        EnemyAI near = null; float nd = 3f;
+        foreach (var e in EnemyAI.All)
+        {
+            if (!e || e.IsDead) continue;
+            var to = e.transform.position + Vector3.up - ct.position; float d = to.magnitude;
+            if (d < nd && Vector3.Dot(to / d, ct.forward) > 0.2f) { nd = d; near = e; }
+        }
+        if (near)
+        {
+            low |= near.Crouched;
+            var to = Vector3.ProjectOnPlane(near.transform.position - ct.position, Vector3.up).normalized;
+            side = Vector3.Dot(to, ct.right) < -0.45f;                  // off to the support side: the backhand reaches him
+        }
+        float r = Random.value; int kind;
+        if (heavy) kind = low ? (r < 0.8f ? ViewModel.StabDown : ViewModel.Thrust) : side ? (r < 0.6f ? ViewModel.RipBack : ViewModel.Thrust) : (r < 0.6f ? ViewModel.Thrust : r < 0.85f ? ViewModel.StabDown : ViewModel.RipBack);
+        else kind = low ? (r < 0.7f ? ViewModel.CutDown : ViewModel.CutAcross) : (r < 0.6f ? ViewModel.CutAcross : ViewModel.CutDown);
+        if (kind == lastKnife && kind != ViewModel.CutAcross && Random.value < 0.6f) kind = heavy ? (kind == ViewModel.Thrust ? ViewModel.StabDown : ViewModel.Thrust) : ViewModel.CutAcross;
+        if (forceKnife >= 0) { kind = forceKnife; forceKnife = -1; }
+        lastKnife = kind;
+        vm.KnifeAttack(kind);
+        nextShot = Time.time + ViewModel.KnifeTime(kind) + 0.04f;
     }
+    [HideInInspector] public int forceKnife = -1;          // the test asks for one attack by name
 
     void MeleeHit(bool heavy)
     {
