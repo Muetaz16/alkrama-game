@@ -8,3 +8,9 @@ Builds/
 *.csproj
 *.sln
 .vs/
+
+# Weapon reference photo library: large binaries stay local (INDEX.csv, README.md and _tools are trackable)
+WeaponReference/**/originals/
+WeaponReference/**/normalized/
+WeaponReference/_cache/
+WeaponReference/_tools/__pycache__/
