@@ -4,17 +4,24 @@ using UnityEngine.InputSystem;
 
 // A dead fighter's rifle falls out of his hands and can be taken (G): what is in it is whatever he had
 // left - a part-used magazine and a random number of spare ones. The player already carries an AK, so the
-// rifle itself is stripped: the rounds go into the reserve.
+// rifle itself is stripped: the rounds go into the reserve - of the weapon they fit, and only that one.
+// An AK's 7.62x39 goes to the AK; it is no use to the 9x39 sniper rifle, and the other way round.
 // Nothing in the scene refers to this: it starts itself and watches EnemyAI.All for men who have died.
 public class WeaponPickups : MonoBehaviour
 {
     public const float Reach = 2.4f, Lifetime = 90f;
     public const int MaxReserve = 360;
 
-    public class Drop { public Transform gun; public int magRounds, spareMags, magSize; public float until; public int Rounds => magRounds + spareMags * magSize; }
+    public class Drop { public Transform gun; public int magRounds, spareMags, magSize, weapon; public string calibre; public float until; public int Rounds => magRounds + spareMags * magSize; }
+    // cartridge of each of the player's weapons (index as in WeaponController.weapons); a knife takes none
+    public static readonly string[] Calibre = { "7.62x39", "9x39", null };
+    /// <summary>The player's weapon this cartridge feeds, or -1 if he carries nothing that takes it.</summary>
+    public static int WeaponFor(string calibre) { for (int i = 0; i < Calibre.Length; i++) if (Calibre[i] != null && Calibre[i] == calibre) return i; return -1; }
+    static string CalibreOf(Transform rifle) => rifle.name == "Sniper" ? Calibre[1] : Calibre[0];      // the fighters carry AKs
     public static readonly List<Drop> Drops = new();
     public static int Taken { get; private set; }          // rifles picked up so far
     public static int LastRounds { get; private set; }
+    public static int LastWeapon { get; private set; } = -1;      // which of the player's weapons the last pickup fed
 
     static WeaponPickups inst;
     readonly List<EnemyAI> known = new();
@@ -82,8 +89,9 @@ public class WeaponPickups : MonoBehaviour
         rb.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         rb.linearVelocity = e.transform.forward * Random.Range(0.3f, 1.1f) + Vector3.up * Random.Range(0.4f, 1.2f);
         rb.angularVelocity = Random.insideUnitSphere * 3f;
-        int size = gun.Get(0).magSize;
-        Drops.Add(new Drop { gun = rifle, magSize = size, magRounds = Random.Range(3, size + 1), spareMags = Random.Range(0, 4), until = Time.time + Lifetime });
+        string cal = CalibreOf(rifle); int fits = WeaponFor(cal);
+        int size = fits >= 0 ? gun.Get(fits).magSize : 30;
+        Drops.Add(new Drop { gun = rifle, calibre = cal, weapon = fits, magSize = size, magRounds = Random.Range(3, size + 1), spareMags = Random.Range(0, 4), until = Time.time + Lifetime });
     }
 
     static Drop Nearest(Vector3 from, float reach)
@@ -99,10 +107,16 @@ public class WeaponPickups : MonoBehaviour
         if (!inst || !inst.gun) return 0;
         var d = Nearest(inst.player.transform.position + Vector3.up * 0.8f, Reach);
         if (d == null) return 0;
-        var ak = inst.gun.Get(0);
-        int room = Mathf.Max(0, MaxReserve - ak.reserve), got = Mathf.Min(room, d.Rounds);
-        ak.reserve += got; LastRounds = got; Taken++;
-        inst.toast = got > 0 ? $"+{got} rounds  ({d.spareMags} mag{(d.spareMags == 1 ? "" : "s")} + {d.magRounds} in the rifle)" : "ammo full";
+        if (d.weapon < 0)
+        {
+            // nothing he carries takes this cartridge: the rifle is left where it lies
+            LastRounds = 0; inst.toast = $"{d.calibre}: fits none of your weapons"; inst.toastUntil = Time.time + 2.5f;
+            return 0;
+        }
+        var fed = inst.gun.Get(d.weapon);
+        int room = Mathf.Max(0, MaxReserve - fed.reserve), got = Mathf.Min(room, d.Rounds);
+        fed.reserve += got; LastRounds = got; LastWeapon = d.weapon; Taken++;
+        inst.toast = got > 0 ? $"+{got} x {d.calibre} for the {fed.name}  ({d.spareMags} mag{(d.spareMags == 1 ? "" : "s")} + {d.magRounds} in the rifle)" : $"{fed.name} ammo full";
         inst.toastUntil = Time.time + 2.5f;
         Drops.Remove(d); Destroy(d.gun.gameObject);
         return got;
@@ -118,7 +132,9 @@ public class WeaponPickups : MonoBehaviour
         }
         float w = Screen.width, h = Screen.height;
         var d = Nearest(player.transform.position + Vector3.up * 0.8f, Reach);
-        if (d != null) Label(new Rect(w / 2 - 400, h * 0.62f, 800, 40), $"G  ·  pick up AK-47  ({d.spareMags} mag{(d.spareMags == 1 ? "" : "s")} + {d.magRounds} rounds)", style, Color.white);
+        if (d != null) Label(new Rect(w / 2 - 450, h * 0.62f, 900, 40), d.weapon >= 0
+            ? $"G  ·  take {d.calibre} for the {gun.Get(d.weapon).name}  ({d.spareMags} mag{(d.spareMags == 1 ? "" : "s")} + {d.magRounds} rounds)"
+            : $"{d.calibre}  ·  fits none of your weapons", style, d.weapon >= 0 ? Color.white : new Color(0.8f, 0.8f, 0.8f));
         if (Time.time < toastUntil) Label(new Rect(w / 2 - 400, h * 0.68f, 800, 36), toast, small, new Color(1f, 0.9f, 0.55f));
     }
 
