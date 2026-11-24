@@ -28,7 +28,7 @@ MonoBehaviour:
   - {fileID: 968494768686654813}
   m_RendererFeatureMap: 
   xrSystemData: {fileID: 0}
-  postProcessData: {fileID: 0}
+  postProcessData: {fileID: 11400000, guid: 41439944d30ece34e96484bdb6645b55, type: 2}
   m_AssetVersion: 3
   m_PrepassLayerMask:
     serializedVersion: 2
@@ -57,7 +57,7 @@ MonoBehaviour:
   m_TileOnlyMode: 0
 --- !u!114 &968494768686654813
 MonoBehaviour:
-  m_ObjectHideFlags: 0
+  m_ObjectHideFlags: 1
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
@@ -74,10 +74,10 @@ MonoBehaviour:
     AfterOpaque: 0
     Source: 1
     NormalSamples: 1
-    Intensity: 1.4
-    DirectLightingStrength: 0.25
-    Radius: 0.6
-    Samples: 1
+    Intensity: 1.5
+    DirectLightingStrength: 0.35
+    Radius: 0.7
+    Samples: 0
     BlurQuality: 0
-    Falloff: 100
+    Falloff: 120
     SampleCount: -1
