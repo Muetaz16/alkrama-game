@@ -18,7 +18,7 @@ public class ThirdPersonCamera : MonoBehaviour
     [HideInInspector] public bool aimingFov;      // the weapon owns the field of view while aiming
     [HideInInspector] public float baseFov = 65f;
     public bool firstPerson = true;              // Call of Duty view: only the gun; V switches to over-the-shoulder
-    public float eyeHeight = 1.62f, crouchEye = 1.08f;
+    public float eyeHeight = 1.62f, crouchEye = 1.08f, proneEye = 0.34f;
     float sprintFov, roll, startLean, eye = 1.62f, leanOff, leanRoll, turnRoll;
 
     void Start()
@@ -45,7 +45,7 @@ public class ThirdPersonCamera : MonoBehaviour
             if (Cursor.lockState != CursorLockMode.Locked && Mouse.current != null) d -= Mouse.current.delta.ReadValue() * mouseSensitivity;   // don't spin while the mouse is free
         }
         yaw += d.x;
-        pitch = Mathf.Clamp(pitch - d.y, minPitch, maxPitch);
+        pitch = Mathf.Clamp(pitch - d.y, target.prone ? -32f : minPitch, target.prone ? 14f : maxPitch);     // lying down the head only lifts so far
         target.yaw = yaw;
 
         // same camera feel as the web game: head bob synced to the steps, sprint widens the view
@@ -67,7 +67,7 @@ public class ThirdPersonCamera : MonoBehaviour
         if (firstPerson)
         {
             // eyes of the soldier: lower when crouched, a light bob (the gun does most of the moving)
-            eye = Mathf.Lerp(eye, target.crouch ? crouchEye : eyeHeight, 1 - Mathf.Exp(-10 * dt));
+            eye = Mathf.Lerp(eye, target.prone ? proneEye : target.crouch ? crouchEye : eyeHeight, 1 - Mathf.Exp(-(target.prone || eye < crouchEye - 0.1f ? 5.5f : 10f) * dt));
             var eyePos = target.transform.position + Vector3.up * (eye + target.LandDip * 0.6f) + Quaternion.Euler(0, yaw, 0) * (new Vector3(0, 0, 0.1f) + bob * 0.55f);
             // leaning: head out to the side, never through the wall
             var side = Quaternion.Euler(0, yaw, 0) * Vector3.right; float leanWant = target.Lean * 0.34f;

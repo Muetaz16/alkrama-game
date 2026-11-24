@@ -24,6 +24,7 @@ public static class LookUpgrade
         CityDetail.Build();
         LookPro.Build();
         GameplaySetup.Run();
+        CinematicLook.Apply();          // post-processing stored in the profile asset, soft shadows, grade (see CinematicLook.cs)
         EditorSceneManager.SaveScene(scene);
     }
 

@@ -10,14 +10,32 @@ using UnityEngine.AI;
 //   flanker      one in three swings wide round your side before joining in
 //   no cover     strafes left / right while firing, keeps 10-24 m away
 //   you hide     lobs a grenade at your last spot; everyone runs from a grenade near him
-//   lost you     after 7 s goes hunting where you were last seen
+//   lost you     after 6-11 s goes hunting where you were last seen
 // Rifle and upper body aim at you; recoil, muzzle flash, tracers, impacts, footsteps, bullets whizzing past.
+//
+// He is meant to look drilled, not scripted:
+//   contact      whoever sees you first drops to a knee and returns fire while his mates run for cover
+//   movement     cover to cover in short bounds: sprints the open stretch without firing, backs into the last
+//                metres facing you; never more than one or two up at once - the others put rounds down
+//   fire         a reaction time, sights must settle, short bursts with a pause to find you again; worse when
+//                he moves, at range, late in a burst, when your rounds crack past him or he has been hit
+//   cover        leans out either side (whichever has a view) or pops up, never the same rhythm twice, shifts to
+//                another position after a few peeks; reloads crouched; ducks at once when shot at
+//   search       runs most of the way to where you were, walks the last metres rifle up, stops, looks round,
+//                checks two or three more places before he calms down
+//   motion       turns, speeds, torso twist, aim and the hand on the rifle are all eased, nothing snaps
 public class EnemyAI : Damageable
 {
     public static readonly List<EnemyAI> All = new();
     public static int ShotsFired, GrenadesThrown;
     const float Range = 60f, Hearing = 45f;
     const int Mag = 30;
+    // paces chosen to sit on the clips (walk 1.92, run 4.8, sprint 7.2, crouch-walk 2.04 m/s) so the feet stay planted
+    const float StrollS = 1.6f, TacticalS = 2.1f, ApproachS = 4f, RunS = 4.8f, SprintS = 6.6f, CrouchS = 1.9f;
+    const float ReloadTime = 2.4f, ContactRange = 25f, BoundLen = 14f;
+    const float AccNear = 0.30f, AccFar = 0.06f;            // chance per round at 10 m / 60 m, standing still, sights settled
+    const float SettleTime = 0.5f, SuppRecover = 0.22f;     // s to steady the sights; suppression lost per second
+    const float TwistMax = 40f;                             // how far the torso turns to you before the feet follow
     public enum State { Patrol, Hunt, Cover, Flank, Open, Evade }
     public State Mode { get; private set; } = State.Patrol;
     public bool Crouched => crouchT > 0.5f;
@@ -31,17 +49,22 @@ public class EnemyAI : Damageable
     NavMeshAgent agent; CharacterController cc; Animator anim; Transform player; PlayerHealth ph; PlayerController pc;
     Transform rifle, muzzle, flash, gripL, armL, foreL, handL; Transform[] spine; Quaternion rifleLocalRot; Vector3 rifleLocalPos;
     float raiseW, hitP, hitR, hitVP, hitVR, curSpeed; bool sprinting, wantCrouchNow;
-    AudioSource gunAudio, stepAudio; LineRenderer tracer;
     bool alerted, sees, dead, flanker, flankDone, flankSet, hasCover, peeking, raised;
     int flankSide, ammo = Mag, burst, grenades = 1, strafeDir = 1;
-    float seenT = 99, firstSeen = -99, shootT, reloadT, coverCheckT, phaseT, exposedT, strafeT, stuckT, wanderT, nadeCool,
+    float seenT = 99, firstSeen = -99, shootT, reloadT, coverCheckT, phaseT, exposedT, stuckT, wanderT, nadeCool,
           crouchT, aimW, recoil, flashOff, tracerOff, staggerUntil, nextLook, distToPlayer = 999, stepDist, lookSeed;
     Vector3? lastSeen; Vector3 wander, home, flankPos, goalSet = new Vector3(1e6f, 0, 1e6f);
     CoverSpot cover;
+    // discipline: suppression (0-1), sight settle (0-1), reaction, timers that differ per man so they never move in step
+    float supp, settle, react = 0.45f, tempo = 1, huntAfter = 7, contactUntil, duckUntil, flinchUntil, hurtUntil, coverRetryAt,
+          heardShot, scanT, idleYaw, openT, yawVel, twist, aimPitch, aimErr = 180, ikW = 1;
+    bool bounding, support, scanning, searching, dashing, mateMoving, hasAim;
+    int peeksLeft, peekSide, burstShot, searchLeft, matesPeek, matesCover;
+    Vector3 peekPos, dashPos, aimPoint, avoidPos = new Vector3(1e6f, 0, 1e6f);
+    static readonly RaycastHit[] rayBuf = new RaycastHit[64];
+    static readonly Collider[] colBuf = new Collider[384];
     static int spawnCount;
-    static AudioClip shotClip, stepClip, whizClip;
-    static Texture2D flashTex;
-    static ParticleSystem dust;
+    static Texture2D flashTex;      // sounds are CombatAudio, tracers / impacts / blood are CombatFx
     static readonly int VelX = Animator.StringToHash("VelX"), VelZ = Animator.StringToHash("VelZ"),
         CrouchP = Animator.StringToHash("Crouch"), AnimSpeed = Animator.StringToHash("AnimSpeed"), RaiseP = Animator.StringToHash("Raise");
 
@@ -57,7 +80,9 @@ public class EnemyAI : Damageable
         if (pc) { player = pc.transform; ph = pc.GetComponent<PlayerHealth>(); }
         All.Add(this);
         flanker = spawnCount++ % 3 == 2; flankSide = R < 0.5f ? -1 : 1;
-        nadeCool = 6 + R * 6; shootT = 0.4f + R * 0.8f;
+        nadeCool = 6 + R * 6;
+        tempo = 0.85f + R * 0.4f; huntAfter = 6 + R * 5; nextLook = Time.time + R * 0.1f;      // nobody shares a clock
+        heardShot = WeaponController.LastShotTime; idleYaw = transform.eulerAngles.y;
         // desert-tan kit so he reads differently from your grey one
         foreach (var r in GetComponentsInChildren<Renderer>())
             foreach (var m in r.materials) if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", m.GetColor("_BaseColor") * new Color(0.95f, 0.72f, 0.46f));
@@ -73,7 +98,7 @@ public class EnemyAI : Damageable
 
         agent = GetComponent<NavMeshAgent>(); if (!agent) agent = gameObject.AddComponent<NavMeshAgent>();
         agent.radius = 0.35f; agent.height = 1.8f; agent.baseOffset = 0;
-        agent.acceleration = 24f; agent.angularSpeed = 0; agent.updateRotation = false; agent.autoBraking = true;
+        agent.acceleration = 11f; agent.angularSpeed = 0;      // a man takes half a second to get up to a run agent.updateRotation = false; agent.autoBraking = true;
         agent.stoppingDistance = 0.25f; agent.obstacleAvoidanceType = ObstacleAvoidanceType.MedQualityObstacleAvoidance;
         agent.avoidancePriority = Random.Range(30, 70);
         if (NavMesh.SamplePosition(transform.position, out var nh, 4f, NavMesh.AllAreas)) agent.Warp(nh.position);
@@ -108,17 +133,7 @@ public class EnemyAI : Damageable
 
     void SetupFx()
     {
-        if (!shotClip) shotClip = WeaponController.Gunshot(0.3f, 800f, 5);
-        if (!stepClip) stepClip = Step();
-        if (!whizClip) whizClip = Whiz();
         if (!flashTex) flashTex = FlashTexture(64);
-        if (!dust) dust = Dust();
-        gunAudio = gameObject.AddComponent<AudioSource>(); gunAudio.spatialBlend = 1; gunAudio.minDistance = 8; gunAudio.maxDistance = 240; gunAudio.rolloffMode = AudioRolloffMode.Linear; gunAudio.volume = 0.75f;
-        stepAudio = gameObject.AddComponent<AudioSource>(); stepAudio.spatialBlend = 1; stepAudio.minDistance = 2; stepAudio.maxDistance = 28; stepAudio.rolloffMode = AudioRolloffMode.Linear; stepAudio.volume = 0.6f;
-        tracer = new GameObject("EnemyTracer").AddComponent<LineRenderer>(); tracer.transform.SetParent(transform, false);
-        tracer.useWorldSpace = true; tracer.material = new Material(Shader.Find("Sprites/Default"));
-        tracer.startColor = new Color(1f, 0.6f, 0.35f, 0.95f); tracer.endColor = new Color(1f, 0.75f, 0.45f, 0.15f);
-        tracer.startWidth = 0.025f; tracer.endWidth = 0.012f; tracer.positionCount = 2; tracer.enabled = false;
         if (muzzle)
         {
             var q = GameObject.CreatePrimitive(PrimitiveType.Quad); Destroy(q.GetComponent<Collider>());
@@ -138,8 +153,10 @@ public class EnemyAI : Damageable
     {
         first = default; float best = float.MaxValue; bool any = false;
         var d = b - a; float len = d.magnitude; if (len < 0.01f) return false;
-        foreach (var h in Physics.RaycastAll(a, d / len, len, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+        int n = Physics.RaycastNonAlloc(a, d / len, rayBuf, len, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);   // shared buffer: no garbage
+        for (int i = 0; i < n; i++)
         {
+            var h = rayBuf[i];
             if (h.collider.transform.IsChildOf(transform)) continue;
             if (skipPlayer && player && h.collider.transform.IsChildOf(player)) continue;
             if (h.collider.GetComponentInParent<EnemyAI>()) continue;
@@ -155,21 +172,63 @@ public class EnemyAI : Damageable
         bool inView = alerted || distToPlayer < 8f || Vector3.Angle(transform.forward, to) < 75f;
         bool was = sees;
         sees = distToPlayer < Range && inView && !FirstHit(Eye, PlayerTarget, out _, true);
+        // what the mates near him are doing (read by the cover logic: who is up and moving, who is peeking)
+        int near = 0, holders = 0; mateMoving = false; matesPeek = matesCover = 0;
+        foreach (var o in All)
+        {
+            if (o == this || o.dead || Flat(o.transform.position, transform.position) > 40f) continue;
+            near++; if (o.bounding) mateMoving = true;
+            if (o.support && Time.time < o.contactUntil) holders++;
+            if (o.hasCover) { matesCover++; if (o.peeking) matesPeek++; }
+        }
         if (sees)
         {
-            if (!was && seenT > 3f) firstSeen = Time.time;              // takes a moment to react
-            alerted = true; lastSeen = player.position;
+            if (!was && seenT > 3f)
+            {
+                firstSeen = Time.time; react = 0.3f + R * 0.25f + (alerted ? 0 : 0.2f);      // takes a moment to react, longer if surprised
+                settle = 0; contactUntil = 0;
+                if (distToPlayer < ContactRange) flankDone = true;                        // too close to go round you: fight
+                if (distToPlayer < ContactRange && !AtCover)
+                {
+                    // contact drill: the first to see you holds and returns fire, the rest get one burst off and move
+                    support = near == 0 || holders * 2 < near;
+                    contactUntil = Time.time + react + (near == 0 ? 1.1f + R * 0.6f : support ? 2.2f + R * 1.2f : 0.5f + R * 0.4f);
+                }
+            }
+            alerted = true; Known(player.position);
             foreach (var o in All)                                       // shouts it to his mates
                 if (o != this && !o.dead && Flat(o.transform.position, transform.position) < 35f) o.Alert(player.position);
         }
-        else if (Time.time - WeaponController.LastShotTime < 0.3f && distToPlayer < Hearing) { alerted = true; lastSeen = player.position; }
+        else if (Time.time - WeaponController.LastShotTime < 0.3f && distToPlayer < Hearing) { alerted = true; Known(player.position); }
     }
+
+    bool AtCover => hasCover && Flat(transform.position, cover.pos) < 0.9f;
+
+    // fresh word of where you are: drop any search he was on
+    void Known(Vector3 at) { lastSeen = at; searching = scanning = false; searchLeft = 2 + (lookSeed > 3.14f ? 1 : 0); }
 
     // told where the player is: he joins the fight
     public void Alert(Vector3 at)
     {
         if (dead) return;
-        alerted = true; if (!sees) lastSeen = at;
+        alerted = true; if (!sees) Known(at);
+    }
+
+    // your shot: did it crack past him? Then he ducks, loses his aim for a while and knows roughly where you are
+    void Incoming()
+    {
+        var cam = Camera.main; if (!cam || !player) return;
+        Vector3 f = cam.transform.forward, o = cam.transform.position;
+        o += f * Mathf.Max(0, Vector3.Dot(player.position + Vector3.up * 1.5f - o, f) + 0.6f);        // start past your own body (third person)
+        var c = transform.position + Vector3.up * 1.1f - o;
+        float along = Vector3.Dot(c, f); if (along < 1f || along > 160f) return;
+        float miss = (c - f * along).magnitude; if (miss > 2.2f) return;
+        if (along > 3f && FirstHit(o, o + f * (along - 2.5f), out _, true)) return;                    // stopped by a wall well short of him
+        supp = Mathf.Min(1, supp + Mathf.Lerp(0.45f, 0.2f, miss / 2.2f));
+        duckUntil = Time.time + 0.5f + R * 0.6f; flinchUntil = Time.time + 0.3f + R * 0.2f; hitVP += 3.5f;
+        alerted = true; if (!sees) Known(player.position);
+        if (peeking) { peeking = false; phaseT = (1f + R * 1.5f) * tempo; }                          // back down behind it
+        if (!hasCover) coverRetryAt = 0;
     }
 
     // ---------- cover ----------
@@ -183,17 +242,22 @@ public class EnemyAI : Damageable
             if (!NavMesh.SamplePosition(spot, out var h, 0.9f, NavMesh.AllAreas) || h.position.y < -0.3f || h.position.y > 0.8f) return;
             var p = h.position; float dP = Flat(p, threat);
             if (dP < 7f || dP > 45f) return;
-            foreach (var o in All) if (o != this && o.hasCover && Flat(o.cover.pos, p) < 1.6f) return;
+            foreach (var o in All) if (o != this && o.hasCover && Flat(o.cover.pos, p) < 2.5f) return;     // don't bunch up
             // crouched he must be hidden: three rays at 0.95 m (left, middle, right) all stopped close to him
             var perp = Vector3.Cross(Vector3.up, (tChest - p).normalized) * 0.3f;
-            foreach (var off in new[] { -perp, Vector3.zero, perp })
-                if (!FirstHit(p + Vector3.up * 0.95f + off, tChest + off, out var hit, true) || hit.distance > 2.2f) return;
-            float score = Flat(transform.position, p) + Mathf.Abs(dP - 18f) * 0.35f;
+            for (int k = -1; k <= 1; k++)
+                if (!FirstHit(p + Vector3.up * 0.95f + perp * k, tChest + perp * k, out var hit, true) || hit.distance > 2.2f) return;
+            // nearest first, about 18 m from you; a long run in the open costs extra (short bounds), and so does
+            // the position he is leaving (after a few peeks you know where he is)
+            float dS = Flat(transform.position, p);
+            float score = dS + Mathf.Max(0, dS - BoundLen) + Mathf.Abs(dP - 18f) * 0.35f + (Flat(p, avoidPos) < 2.5f ? 14f : 0);
             if (score < bestScore) { bestScore = score; bestSpot = new CoverSpot { pos = p, top = top, side = side }; found = true; }
         }
         // objects: cars, barriers, sandbags, drums - anything 0.8-3 m tall and up to 7 m long standing on the street
-        foreach (var c in Physics.OverlapSphere(transform.position, 22f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+        int nCol = Physics.OverlapSphereNonAlloc(transform.position, 22f, colBuf, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+        for (int ci = 0; ci < nCol; ci++)
         {
+            var c = colBuf[ci];
             if (c.transform.IsChildOf(transform) || (player && c.transform.IsChildOf(player)) || c.GetComponentInParent<EnemyAI>()) continue;
             var b = c.bounds;
             float len = Mathf.Max(b.size.x, b.size.z);
@@ -218,18 +282,22 @@ public class EnemyAI : Damageable
     void Update()
     {
         if (dead) return;
-        float dt = Time.deltaTime;
+        float dt = Time.deltaTime, now = Time.time;
         if (reloadT > 0) { reloadT -= dt; if (reloadT <= 0) ammo = Mag; }
-        if (Time.time >= nextLook) { nextLook = Time.time + 0.15f; Look(); }
+        if (now >= nextLook) { nextLook = now + 0.15f; Look(); }
         if (sees) seenT = 0; else seenT += dt;
+        supp = Mathf.MoveTowards(supp, 0, dt * SuppRecover);
+        if (WeaponController.LastShotTime != heardShot) { heardShot = WeaponController.LastShotTime; Incoming(); }
 
-        Vector3? goal = null, face = null; float speed = 0; bool wantCrouch = false, canShoot = false;
-        var nade = EnemyGrenade.Near(transform.position, EnemyGrenade.Radius + 1.5f);
+        Vector3? goal = null, face = null; float speed = 0; bool wantCrouch = false, canShoot = false, weaponUp = false;
+        bounding = false;
+        var pos = transform.position;
+        var nade = EnemyGrenade.Near(pos, EnemyGrenade.Radius + 1.5f);
         if (nade)
         {
             // grenade! run away from it
-            var away = transform.position - nade.position; away.y = 0;
-            goal = transform.position + away.normalized * 8f; speed = 5.8f; hasCover = false; Mode = State.Evade;
+            var away = pos - nade.position; away.y = 0;
+            goal = pos + away.normalized * 8f; speed = SprintS; hasCover = false; coverRetryAt = 0; peeking = dashing = false; Mode = State.Evade;
         }
         else if (!alerted)
         {
@@ -237,90 +305,173 @@ public class EnemyAI : Damageable
             wanderT -= dt;
             if (wanderT <= 0)
             {
-                wanderT = 3 + R * 4;
+                wanderT = 5 + R * 6;
                 var r = Random.insideUnitCircle * 7f; wander = home + new Vector3(r.x, 0, r.y);
             }
-            if (Flat(transform.position, wander) > 0.6f) { goal = wander; speed = 1.3f; }
-            else face = transform.position + Quaternion.Euler(0, Mathf.Sin(Time.time * 0.7f + lookSeed) * 80f, 0) * transform.forward;
+            if (Flat(pos, wander) > 0.6f) { goal = wander; speed = StrollS; idleYaw = transform.eulerAngles.y; }
+            // stands and looks up and down the street (round the heading he arrived with - not round himself, that made him spin)
+            else face = pos + Quaternion.Euler(0, idleYaw + Mathf.Sin(now * 0.45f + lookSeed) * 55f, 0) * Vector3.forward;
         }
-        else if (!sees && seenT > 7f && lastSeen.HasValue)
+        else if (!sees && seenT > huntAfter && lastSeen.HasValue)
         {
-            // lost you for a while: go hunting where you were last seen
-            Mode = State.Hunt; goal = lastSeen; speed = 3.4f; hasCover = false;
-            if (Flat(transform.position, lastSeen.Value) < 1.8f) { lastSeen = null; alerted = seenT < 20f; home = wander = transform.position; }
+            // lost you for a while: go and look where you were last seen - quickly while it is far, then slow,
+            // rifle up; stop there and look round, then check a couple of places near by before standing down
+            Mode = State.Hunt; hasCover = false; peeking = dashing = false;
+            float d = Flat(pos, lastSeen.Value);
+            if (d > 1.8f && !scanning)
+            {
+                bool close = d < 14f;
+                goal = lastSeen; speed = close ? TacticalS : RunS; weaponUp = close; idleYaw = transform.eulerAngles.y;
+            }
+            else
+            {
+                if (!scanning) { scanning = true; scanT = 1.2f + R * 1.4f; }
+                scanT -= dt; weaponUp = true;
+                face = pos + Quaternion.Euler(0, idleYaw + Mathf.Sin(now * 1.3f + lookSeed) * 75f, 0) * Vector3.forward;
+                if (scanT <= 0)
+                {
+                    scanning = false;
+                    if (searchLeft-- > 0 && SearchPoint(out var next)) { lastSeen = next; searching = true; }
+                    else { lastSeen = null; alerted = searching = false; home = wander = pos; wanderT = 2f; }
+                }
+            }
         }
         else if (flanker && !flankDone && lastSeen.HasValue)
         {
-            // swing wide round your side before engaging
-            Mode = State.Flank;
+            // swing wide round your side before engaging: head down and run, shoot only if he bumps into you
+            Mode = State.Flank; bounding = true;
             if (!flankSet)
             {
-                var toP = lastSeen.Value - transform.position; toP.y = 0; toP.Normalize();
+                var toP = lastSeen.Value - pos; toP.y = 0; toP.Normalize();
                 flankPos = lastSeen.Value + new Vector3(-toP.z, 0, toP.x) * 14f * flankSide - toP * 4f; flankSet = true;
             }
-            goal = flankPos; speed = 4.6f; canShoot = sees && distToPlayer < 25f; face = sees ? player.position : (Vector3?)null;
-            if (Flat(transform.position, flankPos) < 2f || stuckT > 1.5f) flankDone = true;
+            goal = flankPos; speed = RunS;
+            if (sees && distToPlayer < 14f) { canShoot = true; face = player.position; }
+            if (Flat(pos, flankPos) < 2f) flankDone = true;
         }
         else
         {
             coverCheckT -= dt;
-            var threat = lastSeen ?? (player ? player.position : transform.position);
-            if (!hasCover || coverCheckT <= 0 || Flat(cover.pos, threat) < 6f)
+            var threat = lastSeen ?? (player ? player.position : pos);
+            bool at = AtCover;
+            if (now < contactUntil && sees && !at)
             {
-                hasCover = PickCover(threat, out cover);
-                coverCheckT = 7 + R * 5; peeking = false; phaseT = 0.8f + R;
-                if (hasCover) CoverMoves++;
-            }
-            if (hasCover)
-            {
-                Mode = State.Cover;
-                bool tall = cover.top > 1.3f;
-                if (Flat(transform.position, cover.pos) > 0.7f && !(peeking && tall))
-                {
-                    // run to cover, snap-shooting if you're in view
-                    goal = cover.pos; speed = 4.6f; canShoot = sees && distToPlayer < 30f; face = sees ? player.position : (Vector3?)null;
-                }
-                else
-                {
-                    phaseT -= dt;
-                    face = threat;
-                    if (!peeking)
-                    {
-                        wantCrouch = true;
-                        if (ammo < 12 && reloadT <= 0) reloadT = 2.4f;
-                        if (phaseT <= 0 && reloadT <= 0) { peeking = true; phaseT = 1.3f + R * 1.4f; }
-                        // spotted while hiding? this cover is no good, find another
-                        if (sees) { exposedT += dt; if (exposedT > 0.9f) { hasCover = false; exposedT = 0; } } else exposedT = 0;
-                    }
-                    else
-                    {
-                        // peek: stand up over low cover, or step out past a car / wall
-                        if (tall) { goal = cover.pos + cover.side * 1.2f * flankSide; speed = 2f; }
-                        canShoot = sees;
-                        if (phaseT <= 0 || (!sees && phaseT < 0.7f)) { peeking = false; phaseT = 1.4f + R * 2f; goal = cover.pos; speed = 2.5f; }
-                    }
-                }
+                // contact: down on a knee where he stands and return fire (see Look) - then he moves
+                Mode = State.Open; face = threat; canShoot = true; wantCrouch = distToPlayer > 8f; dashing = false;
             }
             else
             {
-                // no cover around: strafe sideways while shooting, keep a fighting distance
-                Mode = State.Open;
-                strafeT -= dt;
-                if (strafeT <= 0) { strafeDir *= -1; strafeT = 1.2f + R * 1.5f; }
-                var toP = threat - transform.position; toP.y = 0; float dP = toP.magnitude; toP /= Mathf.Max(dP, 0.01f);
-                var move = new Vector3(-toP.z, 0, toP.x) * strafeDir + toP * (dP > 24f ? 1f : dP < 10f ? -1f : 0f);
-                goal = transform.position + move.normalized * 2.5f; speed = 2.6f; canShoot = sees; face = threat;
+                bool tooClose = hasCover && Flat(cover.pos, threat) < 6f;
+                bool need = hasCover ? coverCheckT <= 0 || tooClose : now >= coverRetryAt;
+                // one moves, the others cover him: a planned change of position waits while a mate is up and running
+                if (need && hasCover && !tooClose && at && mateMoving) { coverCheckT = 0.8f + R * 1.2f; need = false; }
+                if (need)
+                {
+                    bool had = hasCover && !tooClose; var old = cover;
+                    if (at) avoidPos = cover.pos;                                     // leaving a position: don't come straight back to it
+                    hasCover = PickCover(threat, out cover);
+                    if (hasCover) CoverMoves++;
+                    else if (had) { cover = old; hasCover = true; }                   // nowhere better: stay put
+                    // searching for cover costs a few dozen rays: when there is none, look again in 2 s, not every frame
+                    coverCheckT = 10 + R * 6; coverRetryAt = now + 1.5f + R; peeking = false; exposedT = 0;
+                    phaseT = (0.6f + R * 0.9f) * tempo; peeksLeft = 2 + Random.Range(0, 3);
+                }
+                if (hasCover)
+                {
+                    Mode = State.Cover; dashing = false;
+                    bool tall = cover.top > 1.3f; float dc = Flat(pos, cover.pos);
+                    if (dc > 0.7f && !peeking)
+                    {
+                        goal = cover.pos;
+                        if (dc > 5f)
+                        {
+                            // a bound: up, run, down. Flat out if you can see him or he is under fire; no hip fire on the way
+                            speed = sees || seenT < 2f || now < hurtUntil || supp > 0.3f ? SprintS : RunS; bounding = true;
+                        }
+                        else if (dc > 1.8f)
+                        {
+                            // the last metres he backs in facing you, snap-shooting if you're in view
+                            speed = ApproachS; bounding = true;
+                            if (seenT < 1.5f) { face = threat; canShoot = sees && distToPlayer < 30f; }
+                        }
+                        else { speed = CrouchS; wantCrouch = true; face = threat; }           // settles in low
+                    }
+                    else
+                    {
+                        phaseT -= dt * (peeking ? 1f : 1f / (1f + supp * 1.5f));          // rounds coming in: stays down longer
+                        face = threat;
+                        if (!peeking)
+                        {
+                            wantCrouch = true;
+                            if (ammo < 10 && reloadT <= 0) reloadT = ReloadTime;
+                            // a mate is up and moving: get rounds down now, don't wait out the pause
+                            if (mateMoving && reloadT <= 0 && supp < 0.5f && phaseT > 0.35f) phaseT = 0.35f;
+                            if (phaseT <= 0 && reloadT <= 0)
+                            {
+                                // not everyone up at the same moment: with half the others already firing he waits his turn
+                                if (!mateMoving && matesPeek * 2 > matesCover) phaseT = 0.3f + R * 0.5f;
+                                else StartPeek(threat, tall);
+                            }
+                            // spotted while hiding? shoot back from the knee, and this cover is no good: find another
+                            if (sees) { exposedT += dt; canShoot = exposedT > 0.35f; if (exposedT > 1.2f) { avoidPos = cover.pos; hasCover = false; coverRetryAt = 0; exposedT = 0; } }
+                            else exposedT = 0;
+                        }
+                        else
+                        {
+                            // peek: lean / step out to the side that has a view, or stand up over low cover
+                            if (peekSide != 0) { goal = peekPos; speed = tall ? TacticalS : CrouchS; wantCrouch = !tall; }
+                            bool pin = !sees && seenT < 4f && lastSeen.HasValue;             // lost you a moment ago: keeps your head down
+                            canShoot = sees || pin;
+                            if (phaseT <= 0 || ammo <= 0 || reloadT > 0 || (!sees && !pin && phaseT < 0.7f))
+                            {
+                                peeking = false; phaseT = (1.2f + R * 2.2f) * tempo;
+                                if (peeksLeft <= 0) coverCheckT = 0;                         // you know this spot by now: shift
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // no cover around: kneel and fire, then a short dash to one side and down again - a moving
+                    // target between bursts, not a dancer; keeps a fighting distance
+                    Mode = State.Open;
+                    var toP = threat - pos; toP.y = 0; float dP = toP.magnitude; toP /= Mathf.Max(dP, 0.01f);
+                    openT -= dt * (dP < 7f ? 3f : 1f);
+                    if (dashing)
+                    {
+                        goal = dashPos; speed = RunS; bounding = true;
+                        if (Flat(pos, dashPos) < 0.8f || openT <= 0) { dashing = false; openT = (2f + R * 2.2f) * tempo; }
+                    }
+                    else
+                    {
+                        face = threat; canShoot = sees; wantCrouch = dP > 8f;
+                        if (ammo < 8 && !sees && reloadT <= 0) reloadT = ReloadTime;
+                        if (openT <= 0 && reloadT <= 0 && !(mateMoving && dP > 9f))
+                        {
+                            if (R < 0.4f) strafeDir = -strafeDir;
+                            var c = pos + new Vector3(-toP.z, 0, toP.x) * strafeDir * (4f + R * 3f) + toP * (dP > 26f ? 5f : dP < 12f ? -5f : (R - 0.5f) * 3f);
+                            if (NavMesh.SamplePosition(c, out var dh, 1.5f, NavMesh.AllAreas) && !NavMesh.Raycast(pos, dh.position, out _, NavMesh.AllAreas))
+                            { dashPos = dh.position; dashing = true; openT = 2.5f; }
+                            else { strafeDir = -strafeDir; openT = 0.4f; }
+                        }
+                    }
+                }
             }
-            // you're hiding: flush you out with a grenade
+            // you're hiding: flush you out with a grenade (not onto his own mates, and facing the way he throws)
             nadeCool -= dt;
             if (grenades > 0 && nadeCool <= 0 && !sees && seenT > 2.5f && seenT < 12f && lastSeen.HasValue)
             {
-                float d = Flat(transform.position, lastSeen.Value);
-                if (d > 7f && d < 26f) { EnemyGrenade.Throw(Eye + transform.forward * 0.4f + Vector3.up * 0.15f, lastSeen.Value, cc); grenades--; nadeCool = 14f; GrenadesThrown++; }
+                float d = Flat(pos, lastSeen.Value);
+                bool clear = Vector3.Angle(transform.forward, Vector3.ProjectOnPlane(lastSeen.Value - pos, Vector3.up)) < 50f;
+                foreach (var o in All) if (o != this && Flat(o.transform.position, lastSeen.Value) < EnemyGrenade.Radius) clear = false;
+                if (!clear) nadeCool = 0.5f;
+                else if (d > 7f && d < 26f) { EnemyGrenade.Throw(Eye + transform.forward * 0.4f + Vector3.up * 0.15f, lastSeen.Value, cc); grenades--; nadeCool = 14f; GrenadesThrown++; }
             }
         }
 
-        // stance
+        // stance: a round just cracked past - he gets small, unless he is running for it
+        if (now < duckUntil && alerted && speed <= TacticalS + 0.1f) wantCrouch = true;
+        if (wantCrouch && speed > CrouchS) speed = CrouchS;
         crouchT = Mathf.MoveTowards(crouchT, wantCrouch ? 1 : 0, dt * 4f);
 
         // movement on the navigation map
@@ -329,7 +480,7 @@ public class EnemyAI : Damageable
             agent.isStopped = Time.time < staggerUntil;
             if (goal.HasValue)
             {
-                agent.speed = speed * (wantCrouch ? 0.5f : 1f);
+                agent.speed = speed;
                 if ((goal.Value - goalSet).sqrMagnitude > 0.6f)
                 {
                     goalSet = goal.Value;
@@ -339,44 +490,91 @@ public class EnemyAI : Damageable
                 // stuck against something? give up on that goal
                 bool stalled = !agent.pathPending && agent.remainingDistance > 1f && agent.velocity.magnitude < speed * 0.25f;
                 stuckT = stalled ? stuckT + dt : Mathf.Max(0, stuckT - dt);
-                if (stuckT > 1.2f) { hasCover = false; strafeDir *= -1; wanderT = 0; if (flankSet) flankDone = true; stuckT = 0; goalSet = new Vector3(1e6f, 0, 1e6f); }
+                if (stuckT > 1.2f)
+                {
+                    if (hasCover) { avoidPos = cover.pos; coverRetryAt = 0; }
+                    hasCover = false; peeking = dashing = false; strafeDir *= -1; wanderT = 0; if (flankSet) flankDone = true;
+                    if (searching && lastSeen.HasValue) lastSeen = pos;                  // can't get to that corner: look round from here
+                    stuckT = 0; goalSet = new Vector3(1e6f, 0, 1e6f);
+                }
             }
             else if (agent.hasPath) { agent.ResetPath(); goalSet = new Vector3(1e6f, 0, 1e6f); }
         }
 
-        // facing: you when he's fighting, otherwise where he's going
-        Vector3 dir = face.HasValue ? face.Value - transform.position : agent.desiredVelocity.sqrMagnitude > 0.1f ? agent.desiredVelocity : transform.forward;
+        // facing: you when he's fighting, otherwise where he's going. Eased - quick in a fight, lazy on patrol -
+        // because a snap turn is the first thing that gives a puppet away
+        Vector3 dir = face.HasValue ? face.Value - pos : agent.desiredVelocity.sqrMagnitude > 0.1f ? agent.desiredVelocity : transform.forward;
         dir.y = 0;
-        if (dir.sqrMagnitude > 0.01f) transform.rotation = Quaternion.RotateTowards(transform.rotation, Quaternion.LookRotation(dir), 900f * dt);
+        float yaw = transform.eulerAngles.y;
+        if (dir.sqrMagnitude > 0.01f && now >= staggerUntil)
+        {
+            bool fight = alerted && face.HasValue;
+            yaw = Mathf.SmoothDampAngle(yaw, Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg, ref yawVel, fight ? 0.11f : alerted ? 0.16f : goal.HasValue ? 0.2f : 0.4f, fight ? 540f : alerted ? 400f : goal.HasValue ? 300f : 120f, dt);
+            transform.rotation = Quaternion.Euler(0, yaw, 0);
+        }
+        else yawVel = 0;
 
-        raised = alerted && (canShoot || peeking || sees);
-        curSpeed = speed; sprinting = speed > 5f && goal.HasValue; wantCrouchNow = wantCrouch;
+        // where the rifle points: at you if he sees you, else at the last place he knew
+        hasAim = alerted && player && (sees || lastSeen.HasValue) && Mode != State.Evade;
+        if (hasAim) { aimPoint = sees ? PlayerTarget : lastSeen.Value + Vector3.up * 1.3f; hasAim = Flat(pos, aimPoint) > 2f; }
+        raised = alerted && (canShoot || peeking || sees || weaponUp);
+        aimErr = 180f;
+        if (hasAim) { var to = aimPoint - pos; aimErr = Mathf.Abs(Mathf.DeltaAngle(yaw + twist, Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg)); }
+        curSpeed = goal.HasValue ? speed : 0; sprinting = speed > 5.5f && goal.HasValue; wantCrouchNow = wantCrouch;
         Animate(dt, wantCrouch);
         Footsteps(dt);
-        Shooting(dt, canShoot);
-        if (Time.time > tracerOff) tracer.enabled = false;
+        Shooting(dt, canShoot && now >= flinchUntil);
         if (flash && Time.time > flashOff && flash.gameObject.activeSelf) flash.gameObject.SetActive(false);
     }
 
-    // like the web game: pick ONE movement set (crouch-walk / walk / run / sprint) from what he is doing and play
-    // it at exactly the speed he moves, so the feet stay planted; the 8 directions blend inside the set
+    // a place to look next, a few metres from where he stands (the route there may go round a corner)
+    bool SearchPoint(out Vector3 p)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            var r = Random.insideUnitCircle.normalized * (6f + R * 6f);
+            if (NavMesh.SamplePosition(transform.position + new Vector3(r.x, 0, r.y), out var h, 2f, NavMesh.AllAreas) && Mathf.Abs(h.position.y - transform.position.y) < 1f) { p = h.position; return true; }
+        }
+        p = default; return false;
+    }
+
+    // out from behind cover. Tall cover (car, wall): step out past it - on the side that really has a view of you,
+    // not always the same one. Low cover: mostly pop up over it, sometimes lean out round the end, still kneeling
+    void StartPeek(Vector3 threat, bool tall)
+    {
+        peeking = true; peeksLeft--; phaseT = (1.1f + R * 1.3f) * tempo; peekSide = 0; settle = 0;
+        if (!tall && R > 0.4f) return;
+        int s = R < 0.5f ? -1 : 1; float reach = tall ? 1.2f : 0.9f;
+        for (int k = 0; k < 2; k++, s = -s)
+        {
+            if (!NavMesh.SamplePosition(cover.pos + cover.side * reach * s, out var h, 0.4f, NavMesh.AllAreas) || NavMesh.Raycast(cover.pos, h.position, out _, NavMesh.AllAreas)) continue;
+            if (FirstHit(h.position + Vector3.up * (tall ? 1.55f : 1.05f), threat + Vector3.up * 1.3f, out _, true)) continue;      // no view from there
+            peekPos = h.position; peekSide = s; return;
+        }
+        if (tall) { peekPos = cover.pos + cover.side * reach * flankSide; peekSide = flankSide; }      // neither side is clear: try his usual one
+    }
+
+    // like the web game: pick ONE movement set (crouch-walk / walk / run / sprint) and play it at exactly the speed
+    // he moves, so the feet stay planted; the 8 directions blend inside the set. The set follows what he MEANS to
+    // do, not the speed of the moment, so getting going and pulling up never flicker walk-run-walk; below half a
+    // clip's pace the blend slides towards the idle (shorter steps) instead of the feet skating.
     void Animate(float dt, bool wantCrouch)
     {
         if (!anim) return;
         var v = agent.velocity; v.y = 0; float sp = v.magnitude;
-        raiseW = Mathf.Lerp(raiseW, raised && !sprinting ? 1 : 0, 1 - Mathf.Exp(-9 * dt));
+        raiseW = Mathf.Lerp(raiseW, raised && !sprinting ? 1 : 0, 1 - Mathf.Exp(-7 * dt));
         anim.SetFloat(RaiseP, raiseW);
         anim.SetBool(CrouchP, wantCrouch);
-        bool moving = sp > 0.25f;
+        float want = Mathf.Max(curSpeed, sp);
         float clip = wantCrouch ? PlayerController.CrouchSpeed
-                   : sprinting ? PlayerController.SprintSpeed
-                   : (raised && sp < 3.2f) || sp < 3f ? PlayerController.WalkSpeed : PlayerController.RunSpeed;
+                   : sprinting && sp > 4.2f ? PlayerController.SprintSpeed
+                   : want > 3f ? PlayerController.RunSpeed : PlayerController.WalkSpeed;
         var local = transform.InverseTransformDirection(v);
-        var dir2 = new Vector2(local.x, local.z); if (dir2.sqrMagnitude > 1e-4f) dir2.Normalize();
-        var feed = moving ? dir2 * clip : Vector2.zero;
-        anim.SetFloat(VelX, feed.x, 0.12f, dt);
-        anim.SetFloat(VelZ, feed.y, 0.12f, dt);
-        anim.SetFloat(AnimSpeed, moving ? Mathf.Clamp(sp / clip, 0.5f, 1.6f) : 1f);
+        var dir2 = new Vector2(local.x, local.z); if (sp > 1e-3f) dir2 /= sp;
+        var feed = dir2 * (clip * Mathf.Clamp01(sp / (clip * 0.5f)));
+        anim.SetFloat(VelX, feed.x, 0.14f, dt);
+        anim.SetFloat(VelZ, feed.y, 0.14f, dt);
+        anim.SetFloat(AnimSpeed, sp > 0.2f ? Mathf.Clamp(sp / clip, 0.5f, 1.35f) : 1f, 0.1f, dt);
     }
 
     void Footsteps(float dt)
@@ -386,59 +584,81 @@ public class EnemyAI : Damageable
         float stride = sp > 3.5f ? 1.5f : sp > 2f ? 1.1f : 0.75f;
         if (stepDist < stride) return;
         stepDist = 0;
-        stepAudio.pitch = Random.Range(0.85f, 1.15f);
-        stepAudio.PlayOneShot(stepClip, (sp > 3.5f ? 1f : 0.6f) * (Crouched ? 0.5f : 1f));
+        CombatAudio.Footstep(transform.position, sp, Crouched);
     }
 
-    // rifles fire short bursts from a 30-round magazine
+    // fire discipline: react, bring the rifle on, let the sights settle, a short burst (single aimed shots at
+    // range, longer bursts close in), then a pause to find you again before the next
     void Shooting(float dt, bool canShoot)
     {
         shootT -= dt;
-        if (!canShoot || ammo <= 0 || reloadT > 0 || shootT > 0 || !player) return;
-        if (Time.time - firstSeen < 0.6f) return;                                       // reaction time
-        var toP = player.position - transform.position; toP.y = 0;
-        if (Vector3.Angle(transform.forward, toP) > 25f) return;                          // not facing you yet
-        if (--burst > 0) shootT = 0.12f; else { burst = 3 + Random.Range(0, 3); shootT = 0.7f + R * 0.8f; }
-        if (--ammo <= 0) reloadT = 2.4f;
+        bool moving = agent.velocity.sqrMagnitude > 0.25f;
+        bool onTarget = canShoot && hasAim && aimErr < (moving ? 20f : 9f);
+        settle = onTarget ? Mathf.Min(moving ? 0.6f : 1f, settle + dt / SettleTime) : Mathf.Max(0, settle - dt * 3f);
+        if (!canShoot) burst = 0;                                                          // lost the picture: the next burst starts afresh
+        if (!onTarget || ammo <= 0 || reloadT > 0 || shootT > 0 || !player) return;
+        if (Time.time - firstSeen < react) return;                                        // reaction time
+        if (burst <= 0)
+        {
+            if (settle < 0.45f) return;                                                    // sights not on yet
+            burst = distToPlayer > 38f ? 1 + Random.Range(0, 2) : distToPlayer > 20f ? 2 + Random.Range(0, 2) : 3 + Random.Range(0, 3);
+            burstShot = 0;
+        }
+        burst--; burstShot++;
+        if (burst > 0) shootT = 0.1f;
+        else
+        {
+            // re-acquire: quicker close in, slower at range and when he is being shot at
+            shootT = (0.55f + R * 0.9f) * tempo * Mathf.Lerp(0.65f, 1.3f, Mathf.InverseLerp(10f, 40f, distToPlayer)) * (1f + supp * 0.8f);
+            settle *= 0.5f;
+        }
+        if (--ammo <= 0) { reloadT = ReloadTime; burst = 0; }
         Fire();
+    }
+
+    // chance that a round fired now hits you
+    float HitChance()
+    {
+        float c = Mathf.Lerp(AccNear, AccFar, Mathf.InverseLerp(10f, 60f, distToPlayer));
+        c *= Mathf.Lerp(0.55f, 1f, settle);                                                 // snap shot vs. aimed shot
+        c *= 1f - 0.1f * Mathf.Min(burstShot - 1, 4);                                       // the muzzle climbs through the burst
+        if (agent.velocity.sqrMagnitude > 0.25f) c *= 0.45f; else if (crouchT > 0.5f) c *= 1.15f;   // on the move / steady on a knee
+        c *= 1f - 0.6f * supp;                                                              // your rounds are cracking past him
+        if (Time.time < hurtUntil) c *= 0.7f;                                               // he has just been hit
+        if (pc)
+        {
+            if (pc.Speed > 0.5f) c *= pc.Sprinting ? 0.5f : 0.7f;
+            var pcc = player.GetComponent<CharacterController>();
+            if (pcc && !pcc.isGrounded) c *= 0.6f;
+            if (pc.crouch) c *= 0.65f;
+        }
+        return c;
     }
 
     void Fire()
     {
         ShotsFired++;
         var from = muzzle ? muzzle.position : Eye;
-        var target = PlayerTarget;
-        float chance = Mathf.Clamp(0.3f - distToPlayer * 0.007f, 0.06f, 0.28f);
-        if (agent.velocity.magnitude > 0.5f) chance *= 0.6f;
-        if (pc)
-        {
-            if (pc.Speed > 0.5f) chance *= pc.Sprinting ? 0.5f : 0.7f;
-            var pcc = player.GetComponent<CharacterController>();
-            if (pcc && !pcc.isGrounded) chance *= 0.6f;
-            if (pc.crouch) chance *= 0.65f;
-        }
-        bool hit = R < chance;
-        var end = hit ? target : target + new Vector3((R - 0.5f) * 2.5f, (R - 0.3f) * 1.5f, (R - 0.5f) * 2.5f);
+        // he only hits what he can see; without a view he is putting rounds into the place he last saw you
+        var target = sees ? PlayerTarget : aimPoint;
+        bool hit = sees && R < HitChance();
+        float wide = (sees ? 1f : 1.5f) * Mathf.Lerp(0.6f, 1.4f, distToPlayer / 50f);        // misses spread with range
+        var end = hit ? target : target + new Vector3((R - 0.5f) * 2.5f, (R - 0.3f) * 1.5f, (R - 0.5f) * 2.5f) * wide;
         var dir = (end - from).normalized;
         // the round flies on until it meets something
         var stop = from + dir * 200f;
         if (FirstHit(from, from + dir * 200f, out var h, false))
         {
             stop = h.point;
-            if (!hit && !(player && h.collider.transform.IsChildOf(player)) && dust)
-            { dust.transform.SetPositionAndRotation(h.point + h.normal * 0.05f, Quaternion.LookRotation(h.normal)); dust.Emit(8); }
+            if (!hit && !(player && h.collider.transform.IsChildOf(player))) CombatFx.Impact(h, dir);
         }
-        tracer.SetPosition(0, from); tracer.SetPosition(1, stop); tracer.enabled = true; tracerOff = Time.time + 0.05f;
+        CombatFx.Tracer(from, stop, false);
+        CombatFx.Muzzle(from, dir, false, false);
         if (flash) { flash.gameObject.SetActive(true); flashOff = Time.time + 0.045f; }
         recoil = 1f; hitVP -= 0.6f;
-        gunAudio.pitch = Random.Range(0.92f, 1.05f); gunAudio.PlayOneShot(shotClip);
-        if (hit && ph) ph.Damage(6f + R * 4f, transform.position);
-        else if (player && distToPlayer < 40f && R < 0.35f)
-        {
-            // crack of a near miss, on the side it went past
-            var cam = Camera.main;
-            if (cam) AudioSource.PlayClipAtPoint(whizClip, cam.transform.position + (end - target).normalized * 1.5f, 0.55f);
-        }
+        CombatAudio.Shot(0, from, false, !sees);                    // delayed by distance, a dull thump from far off or behind a wall
+        if (hit && ph) { ph.Damage(6f + R * 4f, transform.position); if (!ph.invulnerable && !ph.Dead) CombatFx.PlayerHit(transform.position); }
+        else if (player) CombatAudio.BulletPass(from, stop);        // a near miss cracks past on the side it went
     }
 
     // ---------- layered on top of the motion capture (as in the web game) ----------
@@ -451,30 +671,41 @@ public class EnemyAI : Damageable
         hitVP += (-140f * hitP - 13f * hitVP) * dt; hitP += hitVP * dt;
         hitVR += (-140f * hitR - 13f * hitVR) * dt; hitR += hitVR * dt;
         recoil = Mathf.Max(0, recoil - dt * 10f);
-        // aim pitch (radians, up = positive)
-        Vector3 tgt = player && (raised || lastSeen.HasValue) ? PlayerTarget : Eye + transform.forward * 10f;
-        var d = tgt - Eye; float hd = new Vector2(d.x, d.z).magnitude;
-        float pitch = Mathf.Atan2(d.y, Mathf.Max(hd, 0.1f)) * (0.35f + 0.65f * raiseW);
+        // aim pitch (radians, up = positive) and torso twist (degrees): both eased, so the rifle swings on to you
+        // instead of jumping, and the shoulders turn to you before the feet catch up
+        float wantPitch = 0, wantTwist = 0;
+        if (hasAim)
+        {
+            var d = aimPoint - Eye; float hd = new Vector2(d.x, d.z).magnitude;
+            wantPitch = Mathf.Atan2(d.y, Mathf.Max(hd, 0.1f)) * (0.35f + 0.65f * raiseW);
+            float off = Mathf.DeltaAngle(transform.eulerAngles.y, Mathf.Atan2(d.x, d.z) * Mathf.Rad2Deg);
+            if (!sprinting && raiseW > 0.3f && Mathf.Abs(off) < 110f) wantTwist = Mathf.Clamp(off, -TwistMax, TwistMax) * raiseW;   // behind him: don't wring the spine
+        }
+        float ease = 1 - Mathf.Exp(-11 * dt);
+        aimPitch = Mathf.Lerp(aimPitch, wantPitch, ease); twist = Mathf.Lerp(twist, wantTwist, ease);
         if (spine != null && spine.Length > 0)
         {
-            float down = (-pitch + hitP * 0.5f - recoil * 0.04f) / spine.Length * Mathf.Rad2Deg;
-            float roll = (-hitR * 0.5f) / spine.Length * Mathf.Rad2Deg;
+            float down = (-aimPitch + hitP * 0.5f - recoil * 0.04f) / spine.Length * Mathf.Rad2Deg;
+            float roll = (-hitR * 0.5f) / spine.Length * Mathf.Rad2Deg, turn = twist / spine.Length;
             foreach (var b in spine)
             {
+                b.rotation = Quaternion.AngleAxis(turn, Vector3.up) * b.rotation;
                 b.rotation = Quaternion.AngleAxis(down, transform.right) * b.rotation;
                 b.rotation = Quaternion.AngleAxis(roll, transform.forward) * b.rotation;
             }
         }
         // rifle: the calibrated hold, tilted while reloading, pushed back by recoil
         rifle.localPosition = rifleLocalPos; rifle.localRotation = rifleLocalRot;
-        float rl = reloadT > 0 ? 1f - reloadT / 2.4f : -1f;
+        float rl = reloadT > 0 ? 1f - reloadT / ReloadTime : -1f;
         float tilt = rl >= 0 ? Mathf.SmoothStep(0, 1, Mathf.InverseLerp(0f, 0.15f, rl)) * (1 - Mathf.SmoothStep(0, 1, Mathf.InverseLerp(0.85f, 1f, rl))) : 0;
         if (tilt > 0) rifle.rotation = Quaternion.AngleAxis(34f * tilt, rifle.forward) * Quaternion.AngleAxis(-14f * tilt, rifle.right) * rifle.rotation;
         if (recoil > 0) rifle.position -= rifle.forward * 0.05f * recoil;
-        // left hand: on the handguard, down to the vest pouch mid-reload; free while sprinting
-        if (gripL && armL && foreL && handL && !sprinting)
+        // left hand: on the handguard, down to the vest pouch mid-reload; free while sprinting (it lets go and
+        // takes hold again over a fifth of a second, it doesn't teleport)
+        ikW = Mathf.MoveTowards(ikW, sprinting ? 0 : 1, dt * 5f);
+        if (gripL && armL && foreL && handL && ikW > 0.01f)
         {
-            var target = gripL.position;
+            var target = Vector3.Lerp(handL.position, gripL.position, Mathf.SmoothStep(0, 1, ikW));
             if (rl >= 0 && spine != null && spine.Length > 0)
             {
                 var pouch = spine[spine.Length - 1].position - transform.right * 0.1f - transform.up * 0.15f + transform.forward * 0.15f;
@@ -508,19 +739,24 @@ public class EnemyAI : Damageable
         bool head = point.y > transform.position.y + (Crouched ? 0.95f : 1.5f);
         health -= dmg * (head ? 2.5f : 1f);
         onHit?.Invoke(this);
+        CombatFx.Impact(Surface.Flesh, point, -dir, dir, dmg > 100f);     // red mist and the thud of the hit
         if (health <= 0) { Die(dir, head); return; }
-        staggerUntil = Time.time + 0.25f;
+        float now = Time.time;
+        staggerUntil = now + 0.35f; flinchUntil = now + 0.55f; hurtUntil = now + 4f; supp = Mathf.Min(1, supp + 0.5f);
         var ld = transform.InverseTransformDirection(new Vector3(dir.x, 0, dir.z).normalized);           // flinch away from the shot
         hitVP += ld.z * 7f; hitVR += ld.x * 7f;
-        if (player) { alerted = true; lastSeen = player.position; if (seenT > 3f) firstSeen = Time.time - 0.3f; }
-        if (!hasCover || Flat(transform.position, cover.pos) > 1f) coverCheckT = 0;        // caught in the open: find cover now
+        if (player) { alerted = true; if (!sees) Known(player.position); if (seenT > 3f) { firstSeen = now; react = 0.35f; } }
+        if (peeking) { peeking = false; phaseT = (1.2f + R * 1.5f) * tempo; }                         // hit while up: straight back down
+        else if (AtCover) { avoidPos = cover.pos; hasCover = false; coverRetryAt = 0; }               // hit while hiding: this cover doesn't work
+        else { coverCheckT = 0; coverRetryAt = 0; contactUntil = 0; }                                 // caught in the open: find cover now
     }
 
     void Die(Vector3 dir, bool head)
     {
         dead = true; All.Remove(this);
         if (agent) agent.enabled = false;
-        cc.enabled = false; tracer.enabled = false;
+        cc.enabled = false;
+        CombatAudio.BodyFall(transform.position);
         if (flash) flash.gameObject.SetActive(false);
         if (rifle) { rifle.localPosition = rifleLocalPos; rifle.localRotation = rifleLocalRot; }
         if (anim) { anim.SetFloat(VelX, 0); anim.SetFloat(VelZ, 0); anim.CrossFade(DeathClip(dir, head), 0.12f); }
@@ -538,22 +774,6 @@ public class EnemyAI : Damageable
     }
 
     // ---------- generated sounds and effects ----------
-    static AudioClip Step()
-    {
-        int rate = 44100, n = (int)(rate * 0.09f); var d = new float[n]; var rnd = new System.Random(31); float lp = 0;
-        for (int i = 0; i < n; i++) { float t = i / (float)rate; float no = (float)(rnd.NextDouble() * 2 - 1); lp += (no - lp) * 0.08f; d[i] = (lp * 3f + no * 0.25f * Mathf.Exp(-t * 120)) * Mathf.Exp(-t * 45); }
-        var c = AudioClip.Create("step", n, 1, rate, false); c.SetData(d, 0); return c;
-    }
-    static AudioClip Whiz()
-    {
-        int rate = 44100, n = (int)(rate * 0.22f); var d = new float[n]; var rnd = new System.Random(33); float lp = 0;
-        for (int i = 0; i < n; i++)
-        {
-            float u = i / (float)n; float no = (float)(rnd.NextDouble() * 2 - 1); lp += (no - lp) * Mathf.Lerp(0.6f, 0.1f, u);
-            d[i] = (no - lp) * Mathf.Sin(u * Mathf.PI) * Mathf.Exp(-u * 3f) * 1.4f + (i < 300 ? no * 0.6f : 0);
-        }
-        var c = AudioClip.Create("whiz", n, 1, rate, false); c.SetData(d, 0); return c;
-    }
     static Texture2D FlashTexture(int n)
     {
         var t = new Texture2D(n, n, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
@@ -566,18 +786,6 @@ public class EnemyAI : Damageable
         }
         t.Apply(); return t;
     }
-    static ParticleSystem Dust()
-    {
-        var go = new GameObject("EnemyImpactDust"); var ps = go.AddComponent<ParticleSystem>();
-        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-        var main = ps.main; main.loop = false; main.playOnAwake = false; main.startLifetime = new ParticleSystem.MinMaxCurve(0.35f, 0.9f);
-        main.startSpeed = new ParticleSystem.MinMaxCurve(1f, 3.5f); main.startSize = new ParticleSystem.MinMaxCurve(0.06f, 0.28f);
-        main.startColor = new Color(0.62f, 0.56f, 0.46f, 0.8f); main.gravityModifier = 0.6f; main.maxParticles = 300; main.simulationSpace = ParticleSystemSimulationSpace.World;
-        var em = ps.emission; em.enabled = false;
-        var sh = ps.shape; sh.shapeType = ParticleSystemShapeType.Cone; sh.angle = 35; sh.radius = 0.02f;
-        go.GetComponent<ParticleSystemRenderer>().material = new Material(Shader.Find("Sprites/Default"));
-        return ps;
-    }
 }
 
 // Hand grenade thrown by an enemy: lobbed at where he last saw you, bounces, goes off after 2.4-3 s.
@@ -586,8 +794,7 @@ public class EnemyGrenade : MonoBehaviour
 {
     public const float Radius = 7f;
     static readonly List<EnemyGrenade> live = new();
-    static AudioClip boom; static ParticleSystem smoke;
-    float fuse;
+    float fuse, lastBounce;
 
     public static Transform Near(Vector3 p, float r)
     {
@@ -617,16 +824,20 @@ public class EnemyGrenade : MonoBehaviour
         if (fuse <= 0) Explode();
     }
 
+    // the clink of it landing and rolling: the warning you get
+    void OnCollisionEnter(Collision c)
+    {
+        if (Time.time - lastBounce < 0.12f || c.relativeVelocity.magnitude < 0.8f) return;
+        lastBounce = Time.time;
+        CombatAudio.GrenadeBounce(transform.position, c.relativeVelocity.magnitude / 6f);
+    }
+
     void Explode()
     {
         live.Remove(this);
         var p = transform.position;
-        if (!boom) boom = WeaponController.Gunshot(1.5f, 150f, 9);
-        AudioSource.PlayClipAtPoint(boom, p, 1f);
-        if (!smoke) smoke = Smoke();
-        smoke.transform.position = p; smoke.Emit(70);
-        var lg = new GameObject("Blast").AddComponent<Light>(); lg.transform.position = p + Vector3.up * 0.5f; lg.type = LightType.Point; lg.range = 14; lg.intensity = 12; lg.color = new Color(1f, 0.65f, 0.3f);
-        Destroy(lg.gameObject, 0.09f);
+        CombatAudio.Explosion(p);       // crack, boom and debris; rings in your ears if it is close
+        CombatFx.Explosion(p);          // flash, fireball, smoke, earth, dust ring, and the camera shake by distance
         var pc = FindFirstObjectByType<PlayerController>();
         if (pc)
         {
@@ -636,28 +847,7 @@ public class EnemyGrenade : MonoBehaviour
                 if (!h.collider.transform.IsChildOf(pc.transform) && !h.collider.GetComponentInParent<EnemyAI>()) { shielded = true; break; }
             var hp = pc.GetComponent<PlayerHealth>();
             if (d < Radius && !shielded && hp) hp.Damage(95f * Mathf.Pow(1 - d / Radius, 1.3f), p);
-            var cam = FindFirstObjectByType<ThirdPersonCamera>();
-            if (cam && d < 25f) cam.lookDelta += Random.insideUnitCircle * 4f * (1 - d / 25f);
         }
         Destroy(gameObject);
-    }
-
-    static ParticleSystem Smoke()
-    {
-        var go = new GameObject("GrenadeSmoke"); var ps = go.AddComponent<ParticleSystem>();
-        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-        var main = ps.main; main.loop = false; main.playOnAwake = false; main.startLifetime = new ParticleSystem.MinMaxCurve(1.2f, 3f);
-        main.startSpeed = new ParticleSystem.MinMaxCurve(2f, 9f); main.startSize = new ParticleSystem.MinMaxCurve(0.6f, 2.2f);
-        main.startColor = new ParticleSystem.MinMaxGradient(new Color(0.35f, 0.32f, 0.28f, 0.85f), new Color(0.62f, 0.56f, 0.46f, 0.75f));
-        main.gravityModifier = 0.15f; main.maxParticles = 400; main.simulationSpace = ParticleSystemSimulationSpace.World;
-        var em = ps.emission; em.enabled = false;
-        var sh = ps.shape; sh.shapeType = ParticleSystemShapeType.Hemisphere; sh.radius = 0.4f;
-        var col = ps.colorOverLifetime; col.enabled = true;
-        var gr = new Gradient(); gr.SetKeys(new[] { new GradientColorKey(Color.white, 0), new GradientColorKey(Color.white, 1) }, new[] { new GradientAlphaKey(0.9f, 0), new GradientAlphaKey(0, 1) });
-        col.color = gr;
-        var sz = ps.sizeOverLifetime; sz.enabled = true; sz.size = new ParticleSystem.MinMaxCurve(1f, AnimationCurve.Linear(0, 0.6f, 1, 1.8f));
-        var lim = ps.limitVelocityOverLifetime; lim.enabled = true; lim.limit = 1.5f; lim.dampen = 0.15f;
-        go.GetComponent<ParticleSystemRenderer>().material = new Material(Shader.Find("Sprites/Default"));
-        return ps;
     }
 }

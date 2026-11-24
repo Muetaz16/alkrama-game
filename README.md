@@ -12,6 +12,8 @@ Built to show investors. Tone: realistic, grounded, Call of Duty / Battlefield f
 
 ## 1. Setup
 
+> Full installation requirements and troubleshooting (in Arabic): **[INSTALL.md](INSTALL.md)**.
+
 | Need | Version / note |
 |---|---|
 | Unity | **6000.6.8f1** (Unity 6) — see `ProjectSettings/ProjectVersion.txt` |
@@ -41,9 +43,13 @@ sign in for them). This has happened many times.
 | WASD / Shift / C / Space | move / sprint (double-tap = tactical sprint) / crouch / jump |
 | Mouse, LMB, RMB | look, fire, aim down sights (sniper: scope) |
 | R | reload (tactical if rounds left, emergency if empty) |
-| **Q / E** | lean left / right (peek round corners) |
+| **Q / E** | lean left / right (peek round corners); a left lean moves the rifle to the left shoulder |
+| **X** | keep the rifle in the left (support-side) shoulder, or bring it back |
+| **Z** | prone (C from prone = up to a knee) |
+| **G** | take a dead fighter's rifle: its rounds go to the AK reserve |
 | 1 / 2 / 3, wheel | AK-47 / sniper (VSS) / knife |
 | F | quick knife |
+| LMB / RMB with the knife | quick cut / committed thrust or reverse-grip stab (contact distance only, about 1 m) |
 | V | first-person ⇄ third-person |
 | Shift while scoped | hold breath |
 | M | drop a map marker (debug) |
@@ -123,11 +129,15 @@ afterwards so the owner's "BEST" kill record starts at 0.
 | `ViewModel.cs` | First-person gun: hip/ADS poses, sway, bob, sprint pose, **low ready / compressed ready / high port**, recoil springs, knife slash/stab, weapon switch, **reload choreography** (workspace, fresh mag strips old one, rock-in, drop or stow, charging-handle rack) and **first-person arms** (a copy of the soldier, two-bone IK onto grip/handguard/magazine/handle, fist on the knife). |
 | `GunFactory.cs` | Loads the real CC0 guns from `Assets/Resources/Guns/` (falls back to code-built models). Named nodes used by animation: `Muzzle`, `Magazine`, `Bolt`, `Sight`, `Eject`, `GripL`. |
 | `EnemyAI.cs` | Enemy soldier on the NavMesh, behaviour ported from the web game: patrol, hunt, real cover (crouch / peek / reload), flanker (1 in 3), open-ground strafing, grenades, flinch, death clips; upper-body aim, left-hand IK, footsteps, near-miss whiz. Also `EnemyGrenade`. |
+| `CombatAudio.cs` | **All sound, synthesised in code** (no audio files): layered gunshots (crack / body / action / echo tail, several takes), enemy fire delayed and dulled by distance, near-miss crack, footsteps by surface on the player's step phase, kit, reload parts, brass, impacts by surface, grenade blast with ear-ring + ducking, wind / surf / far-off battle. Clips are made on background threads at start; pooled voices (24 world + 10 local). Tunables are the public statics at the top. |
+| `CombatFx.cs` | **All combat visuals, built in code**: muzzle flash core / light / smoke, tracers that fly as streaks, impacts by surface (`CombatSurface` reads material + object names), blood mist, case smoke, grenade explosion, camera shake (`CombatFx.Shake`, added to `ThirdPersonCamera.lookDelta` as a zero-sum wobble; off while the camera is script-driven). Only the `Sprites/Default` shader. |
 | `EnemySpawner.cs` | Keeps 6–8 enemies alive, spawns 45–150 m away out of sight on street spots. |
 | `PlayerHealth.cs` | Health, regen, hurt vignette + hit-direction marker, death/respawn, **drowning** (breath bar in deep water), kill counter + saved best (PlayerPrefs). |
 | `Damageable.cs` | Base class for anything that can be shot (targets, enemies). |
 | `PalmSway.cs`, `EnvironmentInit.cs`, `MarkerTool.cs` | Palm crowns in the wind; reflection probe refresh; M-key map marker. |
-| `AutoTest.cs` | The scripted play-test (section 4). |
+| `PlayerBodyPose.cs` | The soldier's own body after the mocap: torso turns with the eyes while the feet stay put, left hand on the handguard, head follows the look, lean and breathing. Starts itself. |
+| `WeaponPickups.cs` | A dead fighter's rifle drops and can be taken with G (random part-used magazine + 0-3 spare ones). Starts itself. |
+| `AutoTest.cs` | The scripted play-test (section 4). Also: an inspection camera beside the weapon (`inspect_*.png`), wrist-reach, trigger-finger and foot-slip measures, `-gaitonly` / `-legacygait` / `-calgait` / `-gaitscale` switches. |
 
 `Assets/Editor/` — the generators listed in section 3, plus `RealCars.cs` (downloaded car models → colour /
 shot-up / burnt variants, LODs) and `ProjectSetup.cs` (package install).
