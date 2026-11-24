@@ -17,12 +17,14 @@ public class AutoTest : MonoBehaviour
         if (!System.Environment.CommandLine.Contains("-autotest")) { enabled = false; return; }
         player = FindFirstObjectByType<PlayerController>();
         cam = FindFirstObjectByType<ThirdPersonCamera>();
-        player.externalInput = true; cam.externalInput = true; startYaw = player.yaw; startPos = player.transform.position;
+        player.externalInput = true; cam.externalInput = true;
+        // nobody at the mouse or keyboard may steer or fire during the run (a click in the window used to empty half a magazine)
+        var wc0 = player.GetComponent<WeaponController>(); if (wc0) wc0.externalInput = true; startYaw = player.yaw; startPos = player.transform.position;
         outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../unity_shots"));
         if (!Application.isEditor) outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../../unity_shots"));
         Directory.CreateDirectory(outDir);
         log = new StreamWriter(Path.Combine(outDir, "autotest.log"));
-        log.WriteLine($"loaded after {Time.realtimeSinceStartup:F1} s, {SystemInfo.graphicsDeviceName}, {Screen.width}x{Screen.height}"); log.Flush();
+        log.WriteLine($"loaded after {Time.realtimeSinceStartup:F1} s, {SystemInfo.graphicsDeviceName}, {Screen.width}x{Screen.height}{(PlayerController.LegacyGait ? ", LEGACY GAIT" : "")}{(PlayerController.GaitScale != 1f ? $", gait scale {PlayerController.GaitScale}" : "")}"); log.Flush();
         StartCoroutine(Run());
     }
 
@@ -30,17 +32,85 @@ public class AutoTest : MonoBehaviour
     {
         player.moveInput = move; player.sprint = sprint; player.walk = walk; player.crouch = crouch;
         var start = player.transform.position; int frames = 0; float t0 = Time.realtimeSinceStartup, worst = 0;
+        var anim = player.GetComponentInChildren<Animator>();
+        FindFeet(anim);
+        slipDist = slipTime = strideDist = 0; slipFrom = Time.time + Mathf.Min(0.5f, secs * 0.4f); slipOn = true;      // not while he is still getting up to speed
+        travel = new Vector3(move.x, 0, move.y);
         for (float t = 0; t < secs; t += Time.deltaTime)
         {
             frames++; worst = Mathf.Max(worst, Time.unscaledDeltaTime);
             cam.lookDelta = new Vector2(turn * Time.deltaTime, 0);
             yield return null;
         }
+        slipOn = false;
         var moved = Vector3.Distance(start, player.transform.position);
-        var anim = player.GetComponentInChildren<Animator>();
         var clip = anim.GetCurrentAnimatorClipInfo(0);
-        log.WriteLine($"{name}: {frames / Mathf.Max(0.01f, Time.realtimeSinceStartup - t0):F0} fps (worst frame {worst * 1000:F0} ms), moved {moved:F2} m in {secs}s ({moved / secs:F2} m/s), grounded {player.GetComponent<CharacterController>().isGrounded}, pos {player.transform.position}, clip {(clip.Length > 0 ? clip[0].clip.name : "-")}");
+        log.WriteLine($"{name}: {frames / Mathf.Max(0.01f, Time.realtimeSinceStartup - t0):F0} fps (worst frame {worst * 1000:F0} ms), moved {moved:F2} m in {secs}s ({moved / secs:F2} m/s), foot slip {(slipTime > 0 ? slipDist / slipTime : 0):F2} m/s, grounded {player.GetComponent<CharacterController>().isGrounded}, pos {player.transform.position}, clip {(clip.Length > 0 ? clip[0].clip.name : "-")}");
         log.Flush();
+    }
+
+    // Foot slip: how fast a foot that is on the ground slides over it (0 = planted, as a real foot is).
+    // Measured after the animator has posed the body, on the toe joint: the ball of the foot stays where it
+    // is put from foot-flat to toe-off, while the ankle travels as the foot rolls over it. A foot is on the
+    // ground while that joint is within 2 cm of where it sits standing still AND it is travelling backwards
+    // relative to the body (the swinging foot also passes low, but going forwards).
+    void FindFeet(Animator anim)
+    {
+        if (footL) return;
+        footL = anim.GetBoneTransform(HumanBodyBones.LeftToes); footR = anim.GetBoneTransform(HumanBodyBones.RightToes);
+        if (!footL || !footR) { footL = anim.GetBoneTransform(HumanBodyBones.LeftFoot); footR = anim.GetBoneTransform(HumanBodyBones.RightFoot); }
+    }
+    // The same samples give the stride speed: how fast the planted foot goes back under the body, which is
+    // the ground speed the clips were made for.
+    Transform footL, footR; Vector3 prevL, prevR, prevLl, prevRl, travel; float slipDist, slipTime, strideDist, slipFrom, ankleRest = -1; bool slipOn, slipPrev;
+    void LateUpdate()
+    {
+        if (!footL || !footR) return;
+        var pt = player.transform; Vector3 l = footL.position, r = footR.position, ll = pt.InverseTransformPoint(l), rl = pt.InverseTransformPoint(r);
+        float ground = pt.position.y, dt = Time.deltaTime;
+        if (ankleRest < 0 && player.Speed < 0.01f && Time.timeSinceLevelLoad > 1f) ankleRest = Mathf.Min(l.y, r.y) - ground;
+        if (slipOn && slipPrev && Time.time >= slipFrom && ankleRest >= 0 && dt > 0)
+        {
+            float lim = ground + ankleRest + 0.02f;
+            var dirL = travel.sqrMagnitude > 0.01f ? travel.normalized : Vector3.zero;       // body-space direction of travel
+            void Foot(Vector3 w, Vector3 pw, Vector3 loc, Vector3 ploc)
+            {
+                if (w.y > lim) return;
+                var dl = loc - ploc; dl.y = 0;
+                if (dirL != Vector3.zero && Vector3.Dot(dl, dirL) >= 0) return;               // going forwards: it is swinging, not planted
+                var d = w - pw; d.y = 0;
+                slipDist += d.magnitude; strideDist += dirL != Vector3.zero ? -Vector3.Dot(dl, dirL) : 0; slipTime += dt;
+            }
+            Foot(l, prevL, ll, prevLl); Foot(r, prevR, rl, prevRl);
+        }
+        prevL = l; prevR = r; prevLl = ll; prevRl = rl; slipPrev = slipOn;
+    }
+
+    // The clips' own ground speeds: hold the body still, drive the animator by hand to each clip set and
+    // watch how fast the planted foot travels back under the body.
+    IEnumerator Calibrate()
+    {
+        var anim = player.GetComponentInChildren<Animator>();
+        FindFeet(anim);
+        player.moveInput = Vector2.zero; yield return new WaitForSeconds(0.5f);
+        player.enabled = false;
+        var sets = new (string name, Vector2 v, bool crouch)[] {
+            ("walk fwd", new Vector2(0, PlayerController.WalkSpeed), false), ("run fwd", new Vector2(0, PlayerController.RunSpeed), false), ("sprint fwd", new Vector2(0, PlayerController.SprintSpeed), false),
+            ("walk back", new Vector2(0, -PlayerController.WalkSpeed), false), ("run back", new Vector2(0, -PlayerController.RunSpeed), false),
+            ("walk left", new Vector2(-PlayerController.WalkSpeed, 0), false), ("run left", new Vector2(-PlayerController.RunSpeed, 0), false),
+            ("crouch fwd", new Vector2(0, PlayerController.CrouchSpeed), true), ("crouch left", new Vector2(-PlayerController.CrouchSpeed, 0), true) };
+        foreach (var (name, v, crouch) in sets)
+        {
+            anim.SetBool("Crouch", crouch); anim.SetBool("Grounded", true); anim.SetFloat("AnimSpeed", 1f);
+            for (float t = 0; t < 0.6f; t += Time.deltaTime) { anim.SetFloat("VelX", v.x); anim.SetFloat("VelZ", v.y); yield return null; }
+            travel = new Vector3(v.x, 0, v.y); slipDist = slipTime = strideDist = 0; slipFrom = 0; slipOn = true;
+            for (float t = 0; t < 2.4f; t += Time.deltaTime) { anim.SetFloat("VelX", v.x); anim.SetFloat("VelZ", v.y); yield return null; }
+            slipOn = false;
+            log.WriteLine($"clip pace {name}: laid out at {v.magnitude:F2} m/s, planted foot travels {(slipTime > 0 ? strideDist / slipTime : 0):F2} m/s ({slipTime:F1} s of ground contact)");
+        }
+        anim.SetBool("Crouch", false); anim.SetFloat("VelX", 0); anim.SetFloat("VelZ", 0);
+        player.enabled = true; log.Flush();
+        yield return new WaitForSeconds(0.5f);
     }
 
     IEnumerator Shot(string file)
@@ -74,6 +144,7 @@ public class AutoTest : MonoBehaviour
         LookAt(near.transform.position + Vector3.up * 0.55f);     // torso centre (0.95 is the gap under the head)
         yield return new WaitForSeconds(0.3f);
         yield return Shot("fp_rifle_hip.png");
+        log.WriteLine("right shoulder: " + gun.View.ArmsDebug());
         gun.aimHeld = true;
         yield return new WaitForSeconds(0.6f);
         LookAt(near.transform.position + Vector3.up * 0.55f);
@@ -102,11 +173,15 @@ public class AutoTest : MonoBehaviour
         log.WriteLine($"tactical reload: tactical {gun.LastReloadTactical}, mag {before2} -> {gun.W.mag}, reserve {gun.W.reserve}");
         // emergency reload (empty): old mag drops, fresh one in, charging handle racked
         gun.W.mag = 0; gun.reloadPressed = true;
-        yield return new WaitForSeconds(0.85f);
+        yield return new WaitForSeconds(0.5f);
+        yield return Shot("fp_reload_draw.png");                // the fresh mag coming up from the chest rig
+        yield return new WaitForSeconds(0.32f);
         yield return Shot("fp_reload_drop.png");
+        yield return new WaitForSeconds(0.6f);
+        yield return Shot("fp_reload_handle.png");              // hand on the charging handle
+        yield return new WaitForSeconds(0.1f);
+        yield return Shot("fp_reload_rack.png");                // handle to the rear
         yield return new WaitForSeconds(0.85f);
-        yield return Shot("fp_reload_rack.png");
-        yield return new WaitForSeconds(0.9f);
         log.WriteLine($"emergency reload: tactical {gun.LastReloadTactical}, mag 0 -> {gun.W.mag}, dropped mags on the ground {GameObject.FindObjectsByType<Transform>(FindObjectsSortMode.None).Length > 0 && GameObject.Find("Dropped mag") != null}");
         // leaning out right, then left
         player.leanInput = 1f; yield return new WaitForSeconds(0.5f);
@@ -114,7 +189,37 @@ public class AutoTest : MonoBehaviour
         var camT = Camera.main.transform; log.WriteLine($"lean right: head {Vector3.Dot(camT.position - player.transform.position, player.transform.right):F2} m to the side, roll {camT.eulerAngles.z:F0} deg");
         player.leanInput = -1f; yield return new WaitForSeconds(0.6f);
         yield return Shot("fp_lean_left.png");
-        player.leanInput = 0; yield return new WaitForSeconds(0.4f);
+        log.WriteLine($"lean left: shoulder side {gun.View.ShoulderSide:F2} (-1 = rifle in the left shoulder)");
+        player.leanInput = 0; yield return new WaitForSeconds(0.5f);
+        log.WriteLine($"lean released: shoulder side {gun.View.ShoulderSide:F2}");
+        // support-side shoulder held with X: ready, aimed, a burst and a reload from that side
+        gun.supportShoulder = true; yield return new WaitForSeconds(0.16f);
+        yield return Shot("fp_shoulder_switch.png");            // half way across
+        yield return new WaitForSeconds(0.45f);
+        yield return Shot("fp_left_ready.png");
+        log.WriteLine("left shoulder: " + gun.View.ArmsDebug());
+        gun.aimHeld = true; yield return new WaitForSeconds(0.5f);
+        LookAt(near.transform.position + Vector3.up * 0.55f); yield return null;
+        yield return Shot("fp_left_ads.png");
+        int hitsL = gun.hits; gun.fireHeld = true; yield return new WaitForSeconds(0.3f); gun.fireHeld = false; gun.aimHeld = false;
+        log.WriteLine($"left shoulder burst at {Vector3.Distance(near.transform.position, player.transform.position):F0} m: {gun.hits - hitsL} hits, shoulder side {gun.View.ShoulderSide:F2}");
+        yield return new WaitForSeconds(0.5f);
+        gun.reloadPressed = true; yield return new WaitForSeconds(0.9f);
+        yield return Shot("fp_left_reload.png");
+        yield return new WaitForSeconds(1.9f);
+        gun.supportShoulder = false; yield return new WaitForSeconds(0.6f);
+        // kneeling and prone
+        player.crouch = true; yield return new WaitForSeconds(0.7f);
+        yield return Shot("fp_kneel.png");
+        player.crouch = false; player.prone = true; yield return new WaitForSeconds(1.2f);
+        LookAt(near.transform.position + Vector3.up * 0.55f); yield return null;
+        yield return Shot("fp_prone.png");
+        gun.aimHeld = true; yield return new WaitForSeconds(0.5f);
+        LookAt(near.transform.position + Vector3.up * 0.55f); yield return null;
+        yield return Shot("fp_prone_ads.png");
+        int hitsP = gun.hits; gun.fireHeld = true; yield return new WaitForSeconds(0.3f); gun.fireHeld = false; gun.aimHeld = false;
+        log.WriteLine($"prone burst: {gun.hits - hitsP} hits, eye {Camera.main.transform.position.y - player.transform.position.y:F2} m above the ground");
+        player.prone = false; yield return new WaitForSeconds(1.0f);
         // low ready after a quiet moment
         yield return new WaitForSeconds(3.2f);
         yield return Shot("fp_low_ready.png");
@@ -163,7 +268,6 @@ public class AutoTest : MonoBehaviour
         log.WriteLine($"knife stab: {gun.knifeHits - before} hits");
         gun.switchTo = 0;
         yield return new WaitForSeconds(0.6f);
-        gun.externalInput = false;
         log.Flush();
     }
 
@@ -280,7 +384,26 @@ public class AutoTest : MonoBehaviour
         yield return new WaitForSeconds(1.0f);
         yield return Shot("enemy_down.png");
         log.WriteLine($"enemy dead {e.IsDead}; kills {kills} -> {hp.Kills}, best {hp.Best}");
-        gun.externalInput = false;
+        // his rifle is on the ground now: walk over and take what was left in it
+        yield return new WaitForSeconds(1.2f);
+        var drops = WeaponPickups.Drops; var keep = player.transform.position;
+        if (drops.Count > 0 && drops[0].gun)
+        {
+            var d0 = drops[0]; var cc0 = player.GetComponent<CharacterController>();
+            var gp = d0.gun.position; var back = Vector3.ProjectOnPlane(keep - gp, Vector3.up).normalized;
+            cc0.enabled = false; player.transform.position = new Vector3(gp.x, keep.y, gp.z) + back * 1.5f + Vector3.up * 0.05f; cc0.enabled = true;
+            yield return new WaitForSeconds(0.4f);
+            LookAt(d0.gun.position);
+            yield return new WaitForSeconds(0.4f);
+            yield return Shot("pickup_prompt.png");
+            int before0 = gun.Get(0).reserve; int got = WeaponPickups.TakeNearest();
+            log.WriteLine($"pickup: rifle on the ground {d0.gun.position.y:F2} m up, {d0.spareMags} mags + {d0.magRounds} rounds in it; took {got}, reserve {before0} -> {gun.Get(0).reserve}, rifles left {drops.Count}");
+            yield return new WaitForSeconds(0.3f);
+            yield return Shot("pickup_taken.png");
+            cc0.enabled = false; player.transform.position = keep; cc0.enabled = true;
+            yield return new WaitForSeconds(0.3f);
+        }
+        else log.WriteLine($"pickup: no rifle dropped ({drops.Count})");
         log.Flush();
     }
 
@@ -454,6 +577,27 @@ public class AutoTest : MonoBehaviour
     {
         yield return new WaitForSeconds(1.5f);
         var health = player.GetComponent<PlayerHealth>(); if (health) health.invulnerable = true;
+        if (System.Environment.CommandLine.Contains("-gaitonly"))
+        {
+            // just the legs: third person, the clips' own paces, then each way of moving with the foot-slip measure
+            foreach (var en in EnemyAI.All.ToArray()) if (en) Destroy(en.gameObject);
+            var sp = FindFirstObjectByType<EnemySpawner>(); if (sp) sp.enabled = false;
+            var w0 = player.GetComponent<WeaponController>(); if (w0) w0.SetView(false);
+            cam.pitch = 8f; yield return new WaitForSeconds(0.6f);
+            yield return Calibrate();
+            yield return Step("idle", Vector2.zero, 1f);
+            yield return Step("walk", Vector2.up, 3f, walk: true);
+            yield return Step("run", Vector2.up, 3f);
+            yield return Step("sprint", Vector2.up, 2.5f, sprint: true);
+            yield return Step("back", Vector2.down, 3f);
+            yield return Step("strafe left", Vector2.left, 3f);
+            yield return Step("strafe right", Vector2.right, 3f);
+            yield return Step("walk back", Vector2.down, 3f, walk: true);
+            yield return Step("crouch walk", Vector2.up, 3f, crouch: true);
+            yield return Step("look aside", Vector2.zero, 0.4f, turn: -80f);
+            log.WriteLine("done"); log.Close();
+            Application.Quit(); yield break;
+        }
         yield return SeafrontShots();
         yield return Shooting();
         yield return Combat();
@@ -473,7 +617,10 @@ public class AutoTest : MonoBehaviour
         pcc.enabled = false; player.transform.position = startPos; pcc.enabled = true;
         player.moveInput = Vector2.zero;
         yield return new WaitForSeconds(0.3f);
+        var wcv = player.GetComponent<WeaponController>(); if (wcv) wcv.SetView(false);
+        yield return new WaitForSeconds(0.4f);
         yield return Shot("play_start.png");
+        yield return Calibrate();
         yield return Step("idle", Vector2.zero, 1f);
         yield return Step("walk", Vector2.up, 2f, walk: true);
         yield return Shot("play_walk.png");
@@ -487,13 +634,17 @@ public class AutoTest : MonoBehaviour
         yield return Step("crouch walk", Vector2.up, 2f, crouch: true);
         yield return Shot("play_crouch.png");
         yield return Step("turn", Vector2.zero, 1f, turn: 90f);
+        yield return Shot("play_turn.png");
+        yield return Step("look aside", Vector2.zero, 0.4f, turn: -80f);
+        yield return Shot("play_look_aside.png");                             // standing, looking 30 degrees off: the torso should turn, not the feet
+        yield return Step("turn settle", Vector2.zero, 0.8f);
         player.jumpPressed = true;
         yield return Step("jump", Vector2.up, 0.35f);
         yield return Shot("play_jump.png");
         yield return Step("land", Vector2.zero, 1f);
         // third person once, to show the soldier with the new rifle
         var wc = player.GetComponent<WeaponController>();
-        if (wc) { wc.SetView(false); yield return new WaitForSeconds(0.5f); yield return Shot("tp_view.png"); wc.SetView(true); }
+        if (wc) { wc.SetView(false); yield return new WaitForSeconds(0.5f); yield return Shot("tp_view.png"); wc.SetView(true); yield return new WaitForSeconds(0.3f); }
         yield return Showcase();
         yield return Drown();
         log.WriteLine("done"); log.Close();

@@ -32,11 +32,12 @@ public class WeaponController : MonoBehaviour
     public bool externalInput;                       // AutoTest drives these
     [HideInInspector] public bool frozen;            // dead: no shooting
     public static float LastShotTime = -99;          // enemies hear this
-    [HideInInspector] public bool fireHeld, aimHeld, reloadPressed, quickKnife, toggleView, holdBreath; [HideInInspector] public int switchTo = -1;
+    [HideInInspector] public bool fireHeld, aimHeld, reloadPressed, quickKnife, toggleView, holdBreath, supportShoulder; [HideInInspector] public int switchTo = -1;
 
     public bool Aiming { get; private set; }
     public bool FirstPerson => camRig && camRig.firstPerson;
     public Weapon W => weapons[current];
+    public Weapon Get(int i) => weapons[i];
     public ViewModel View => vm;
 
     PlayerController player; ThirdPersonCamera camRig; Camera cam; Animator anim; ViewModel vm; CharacterController cc;
@@ -44,9 +45,7 @@ public class WeaponController : MonoBehaviour
     readonly Transform[] handGun = new Transform[3];
     float nextShot, reloadEnd, hitMarker, defaultFov, baseDistance;
     bool reloading; int quickFrom = -1; float quickBack;
-    AudioSource audioSrc; AudioClip rifleClip, sniperClip, clickClip, swishClip, thudClip, magOutClip, magInClip, boltClip;
-    LineRenderer tracer; float tracerOff; Light flash; float flashOff;
-    ParticleSystem dust;
+    // sound is CombatAudio, flash / tracers / impacts / smoke are CombatFx
     readonly Queue<GameObject> holes = new();
     readonly Queue<Rigidbody> shells = new();
     Material holeMat; Texture2D scopeTex, dotTex;
@@ -95,18 +94,6 @@ public class WeaponController : MonoBehaviour
         vm.BuildArms(anim);                              // the soldier's own arms hold the gun in first person
         vm.onSound = OnVmSound; vm.onKnifeHit = MeleeHit; vm.onEject = () => Shell(1);
 
-        audioSrc = gameObject.AddComponent<AudioSource>(); audioSrc.spatialBlend = 0; audioSrc.volume = 0.8f;
-        rifleClip = Gunshot(0.32f, 900f, 1); sniperClip = Gunshot(0.9f, 420f, 2); clickClip = Gunshot(0.03f, 3000f, 3);
-        magOutClip = Click(0.07f, 2200, 11); magInClip = Click(0.09f, 1500, 12); boltClip = Click(0.12f, 2600, 13);
-        swishClip = Swish(0.28f); thudClip = Gunshot(0.12f, 300f, 14);
-
-        tracer = new GameObject("Tracer").AddComponent<LineRenderer>();
-        tracer.material = new Material(Shader.Find("Sprites/Default"));
-        tracer.startColor = new Color(1f, 0.85f, 0.5f, 0.9f); tracer.endColor = new Color(1f, 0.9f, 0.6f, 0.15f);
-        tracer.startWidth = 0.018f; tracer.endWidth = 0.01f; tracer.positionCount = 2; tracer.enabled = false;
-        flash = new GameObject("MuzzleFlash").AddComponent<Light>();
-        flash.type = LightType.Point; flash.color = new Color(1f, 0.75f, 0.4f); flash.range = 6; flash.intensity = 0;
-        dust = BuildDust();
         holeMat = new Material(Shader.Find("Universal Render Pipeline/Lit")); holeMat.SetColor("_BaseColor", new Color(0.05f, 0.045f, 0.04f)); holeMat.SetFloat("_Smoothness", 0);
         scopeTex = ScopeTexture(1024); dotTex = DotTexture(32);
         SetView(camRig.firstPerson);
@@ -147,6 +134,9 @@ public class WeaponController : MonoBehaviour
         if (pendingSlash && Time.time >= nextShot) { pendingSlash = false; Knife(false); }
         if (quickFrom >= 0 && current == 2 && Time.time > quickBack && !vm.KnifeBusy) { switchTo = quickFrom; quickFrom = -1; }
 
+        // which shoulder: a corner on the left is taken from the left shoulder, so only the muzzle and one
+        // eye show round it; leaning sets it, X keeps it there (or brings it back) when you are not leaning
+        vm.leftShoulder = !W.melee && (player.leanInput < -0.5f || (player.leanInput < 0.5f && supportShoulder));
         Aiming = aimHeld && !player.Sprinting && !W.melee;
         player.aiming = Aiming;
         // zoom in/out smoothly; while it runs the weapon owns the field of view
@@ -161,7 +151,7 @@ public class WeaponController : MonoBehaviour
         // scope sway; Shift holds the breath
         if (Aiming && W.scope && aimT > 0.88f)
         {
-            float amp = (holdBreath ? 0.03f : 0.32f) * (1f + fatigue * 1.5f) * (player.crouch ? 0.7f : 1f); float t0 = breath, t1 = breath + Time.deltaTime; breath = t1;
+            float amp = (holdBreath ? 0.03f : 0.32f) * (1f + fatigue * 1.5f) * player.Unsteady; float t0 = breath, t1 = breath + Time.deltaTime; breath = t1;
             camRig.lookDelta += new Vector2((Mathf.Sin(t1 * 0.9f) - Mathf.Sin(t0 * 0.9f)) * amp, (Mathf.Sin(t1 * 1.4f + 1) - Mathf.Sin(t0 * 1.4f + 1)) * amp * 0.8f);
         }
 
@@ -191,14 +181,12 @@ public class WeaponController : MonoBehaviour
         }
         else if (fireHeld && ready)
         {
-            if (W.mag <= 0) { audioSrc.PlayOneShot(clickClip, 0.5f); nextShot = Time.time + 0.3f; if (W.reserve > 0) StartReload(); }
+            if (W.mag <= 0) { CombatAudio.DryFire(); nextShot = Time.time + 0.3f; if (W.reserve > 0) StartReload(); }
             else { Fire(); nextShot = Time.time + 60f / W.rpm; }
             if (!W.auto) fireHeld = false;
         }
 
         AimFocus();
-        if (Time.time > tracerOff) tracer.enabled = false;
-        flash.intensity = Time.time < flashOff ? 6f : 0f;
         hitMarker -= Time.deltaTime;
     }
     bool pendingSlash;
@@ -216,6 +204,8 @@ public class WeaponController : MonoBehaviour
             float target = RayNotSelf(ray.origin, ray.direction, 300f, out var h) ? h.distance : 300f;
             focusDist = Mathf.Lerp(focusDist, target, 1 - Mathf.Exp(-8 * Time.deltaTime));
             dof.mode.Override(DepthOfFieldMode.Bokeh);
+            // a small aperture: the rear sight goes soft the way it does to the eye, it must not melt into a blob
+            dof.focalLength.Override(32f); dof.aperture.Override(20f);
             dof.focusDistance.Override(Mathf.Max(1f, focusDist));
         }
         else if (dof.mode.value != DepthOfFieldMode.Off) dof.mode.Override(DepthOfFieldMode.Off);
@@ -241,7 +231,7 @@ public class WeaponController : MonoBehaviour
     {
         if (!Aiming || W.melee || W.scope || aimT < 0.5f) return;
         float moving = Mathf.Clamp01(player.Speed / PlayerController.JogSpeed);
-        float amp = (0.05f + fatigue * 0.3f + moving * 0.12f) * (player.crouch ? 0.6f : 1f);
+        float amp = (0.05f + fatigue * 0.3f + moving * 0.12f) * player.Unsteady;
         float t0 = swayT, t1 = swayT + Time.deltaTime; swayT = t1;
         float beat(float t) => Mathf.Pow(Mathf.Max(0, Mathf.Sin(t * (5f + fatigue * 5f))), 8) * fatigue * 0.6f;
         float nx(float t) => Mathf.Sin(t * 0.7f) * 0.6f + Mathf.Sin(t * 1.9f + 1.3f) * 0.4f;
@@ -255,7 +245,7 @@ public class WeaponController : MonoBehaviour
     {
         if (Time.time - lastShotT > 0.35f) burstCount = 0;
         burstCount++; lastShotT = Time.time;
-        float mult = (Aiming ? 0.6f : 1f) * (player.crouch ? 0.75f : 1f) * (1f + fatigue * 0.25f);
+        float mult = (Aiming ? 0.6f : 1f) * Mathf.Lerp(1f, player.Unsteady, 0.8f) * (1f + fatigue * 0.25f);
         Vector2 k;
         if (W.scope) k = new Vector2(Random.Range(-0.3f, 0.3f), 2.4f);
         else
@@ -291,6 +281,7 @@ public class WeaponController : MonoBehaviour
         quickKnife = (k != null && k.fKey.wasPressedThisFrame) || (g != null && g.rightStickButton.wasPressedThisFrame);
         toggleView = k != null && k.vKey.wasPressedThisFrame;
         holdBreath = k != null && k.leftShiftKey.isPressed;
+        if (k != null && k.xKey.wasPressedThisFrame) supportShoulder = !supportShoulder;
     }
 
     // where the crosshair points, from the camera
@@ -318,7 +309,7 @@ public class WeaponController : MonoBehaviour
         if (Time.time - lastShotT > 0.35f) burstCount = 0;          // a new burst: the last one's spread is gone
         float moving = Mathf.Clamp(player.Speed / PlayerController.JogSpeed, 0, 2);
         float spread = Aiming ? W.aimSpread * (1 + moving * 3f) : W.spread * (1 + moving * 0.6f);
-        spread *= (1 + fatigue * 0.8f) * (player.crouch ? 0.7f : 1f);
+        spread *= (1 + fatigue * 0.8f) * player.Unsteady;
         spread += Mathf.Min(1.2f, Mathf.Max(0, burstCount) * (Aiming ? 0.05f : 0.12f));
         if (burstCount == 0 && moving < 0.1f) spread *= 0.4f;
         dir = Quaternion.AngleAxis(Random.Range(-spread, spread), ct.up) * Quaternion.AngleAxis(Random.Range(-spread, spread), ct.right) * dir;
@@ -326,11 +317,9 @@ public class WeaponController : MonoBehaviour
         bool hit = Ballistic(start, dir * v, out var h);
 
         var muzzle = Muzzle();
-        tracer.SetPosition(0, muzzle); tracer.SetPosition(1, hit ? h.point : origin + dir * 200);
-        tracer.enabled = !(W.scope && Aiming); tracerOff = Time.time + 0.04f;
-        flash.transform.position = muzzle; flashOff = Time.time + 0.04f;
-        audioSrc.pitch = Random.Range(0.93f, 1.05f);
-        audioSrc.PlayOneShot(W.scope ? sniperClip : rifleClip);
+        if (!(W.scope && Aiming)) CombatFx.Tracer(muzzle, hit ? h.point : origin + dir * 200, true, W.scope);
+        CombatFx.Muzzle(muzzle, dir, W.scope, true);
+        CombatAudio.Shot(W.scope ? 1 : 0, muzzle, true);
         Kick();
         vm.Fire(current, Aiming);
         if (current == 0) Shell(0);
@@ -340,8 +329,7 @@ public class WeaponController : MonoBehaviour
             var d = h.collider.GetComponentInParent<Damageable>();
             if (d) { d.Hit(W.damage, h.point, dir); hitMarker = 0.25f; hits++; }
             else Hole(h);
-            if (dust) dust.transform.SetPositionAndRotation(h.point + h.normal * 0.05f, Quaternion.LookRotation(h.normal));
-            if (dust) dust.Emit(W.scope ? 26 : 12);
+            if (!(d is EnemyAI)) CombatFx.Impact(h, dir, W.scope);      // a man shows his own hit (EnemyAI.Hit)
         }
         lastShot = hit ? $"{(h.collider.GetComponentInParent<Damageable>() ? "TARGET " : "")}{h.distance:F0} m" : "miss";
     }
@@ -365,24 +353,13 @@ public class WeaponController : MonoBehaviour
         }
         if (!any) { lastShot = "knife: miss"; return; }
         var d = best.collider.GetComponentInParent<Damageable>();
-        if (d) { d.Hit(weapons[2].damage * (heavy ? 1.5f : 1f), best.point, f); hitMarker = 0.3f; hits++; knifeHits++; audioSrc.PlayOneShot(thudClip, 0.9f); lastShot = "knife: TARGET"; }
-        else { audioSrc.PlayOneShot(magInClip, 0.7f); if (dust) { dust.transform.SetPositionAndRotation(best.point + best.normal * 0.05f, Quaternion.LookRotation(best.normal)); dust.Emit(6); } lastShot = "knife: wall"; }
+        if (d) { d.Hit(weapons[2].damage * (heavy ? 1.5f : 1f), best.point, f); hitMarker = 0.3f; hits++; knifeHits++; CombatAudio.KnifeHit(d is EnemyAI, best.point); lastShot = "knife: TARGET"; }
+        else { CombatAudio.KnifeHit(false, best.point); CombatFx.Impact(best, f, false, true); lastShot = "knife: wall"; }
         camRig.lookDelta += new Vector2(heavy ? 0 : 0.6f * (Random.value - 0.5f), 0.5f);
     }
     public int knifeHits;
 
-    void OnVmSound(string s)
-    {
-        audioSrc.pitch = Random.Range(0.95f, 1.05f);
-        switch (s)
-        {
-            case "magout": audioSrc.PlayOneShot(magOutClip, 0.6f); break;
-            case "magin": audioSrc.PlayOneShot(magInClip, 0.8f); break;
-            case "boltback": audioSrc.PlayOneShot(boltClip, 0.6f); break;
-            case "boltfwd": audioSrc.PlayOneShot(magInClip, 0.7f); break;
-            case "swish": audioSrc.PlayOneShot(swishClip, 0.7f); break;
-        }
-    }
+    void OnVmSound(string s) => CombatAudio.Reload(s);     // "magout", "magin", "boltback", "boltfwd", "swish"
 
     // a spent case flies out of the ejection port to the right
     void Shell(int w)
@@ -406,6 +383,8 @@ public class WeaponController : MonoBehaviour
         rb.transform.SetPositionAndRotation(at, ct.rotation * Quaternion.Euler(0, 90 + Random.Range(-20, 20), 0));
         rb.linearVelocity = cc.velocity + ct.right * Random.Range(1.6f, 2.6f) + ct.up * Random.Range(1.1f, 1.8f) - ct.forward * Random.Range(0.1f, 0.5f);
         rb.angularVelocity = Random.insideUnitSphere * 25f;
+        CombatFx.ShellSmoke(rb.transform);
+        CombatAudio.ShellDrop(at, transform.position.y, w == 1);
     }
 
     // sniper round: step through the flight with gravity
@@ -470,71 +449,7 @@ public class WeaponController : MonoBehaviour
         if (knife) knife.gameObject.SetActive(current == 2);
     }
 
-    ParticleSystem BuildDust()
-    {
-        var go = new GameObject("ImpactDust");
-        var ps = go.AddComponent<ParticleSystem>();
-        ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-        var main = ps.main; main.loop = false; main.playOnAwake = false; main.startLifetime = new ParticleSystem.MinMaxCurve(0.4f, 1.1f);
-        main.startSpeed = new ParticleSystem.MinMaxCurve(1f, 4f); main.startSize = new ParticleSystem.MinMaxCurve(0.08f, 0.35f);
-        main.startColor = new Color(0.62f, 0.56f, 0.46f, 0.8f); main.gravityModifier = 0.6f; main.maxParticles = 400;
-        main.simulationSpace = ParticleSystemSimulationSpace.World;
-        var em = ps.emission; em.enabled = false;
-        var sh = ps.shape; sh.shapeType = ParticleSystemShapeType.Cone; sh.angle = 35; sh.radius = 0.02f;
-        var col = ps.colorOverLifetime; col.enabled = true;
-        var gr = new Gradient(); gr.SetKeys(new[] { new GradientColorKey(Color.white, 0), new GradientColorKey(Color.white, 1) }, new[] { new GradientAlphaKey(0.8f, 0), new GradientAlphaKey(0, 1) });
-        col.color = gr;
-        var r = go.GetComponent<ParticleSystemRenderer>();
-        r.material = new Material(Shader.Find("Sprites/Default"));   // always in the build
-        return ps;
-    }
-
-    // ---------- generated sounds ----------
-    // a gunshot made from noise: sharp crack, then a decaying boom
-    public static AudioClip Gunshot(float seconds, float body, int seed)
-    {
-        int rate = 44100, n = (int)(rate * seconds);
-        var data = new float[n]; var rnd = new System.Random(seed); float lp = 0;
-        for (int i = 0; i < n; i++)
-        {
-            float t = i / (float)rate;
-            float noise = (float)(rnd.NextDouble() * 2 - 1);
-            lp += (noise - lp) * Mathf.Clamp01(body / rate * 6.28f);
-            float crack = noise * Mathf.Exp(-t * 90f);
-            float boom = lp * Mathf.Exp(-t * (6f / seconds)) * 2.2f;
-            data[i] = Mathf.Clamp((crack * 0.7f + boom) * 0.9f, -1, 1);
-        }
-        var clip = AudioClip.Create("shot", n, 1, rate, false); clip.SetData(data, 0); return clip;
-    }
-
-    // metal click: two short ringing ticks
-    static AudioClip Click(float seconds, float freq, int seed)
-    {
-        int rate = 44100, n = (int)(rate * seconds); var data = new float[n]; var rnd = new System.Random(seed);
-        for (int i = 0; i < n; i++)
-        {
-            float t = i / (float)rate, t2 = Mathf.Max(0, t - seconds * 0.45f);
-            float ring = Mathf.Sin(t * freq * 6.28f) * Mathf.Exp(-t * 70) + Mathf.Sin(t2 * freq * 1.3f * 6.28f) * Mathf.Exp(-t2 * 80) * (t2 > 0 ? 0.8f : 0);
-            float tick = (float)(rnd.NextDouble() * 2 - 1) * (Mathf.Exp(-t * 400) + (t2 > 0 ? Mathf.Exp(-t2 * 400) : 0));
-            data[i] = Mathf.Clamp(ring * 0.5f + tick * 0.6f, -1, 1);
-        }
-        var clip = AudioClip.Create("click", n, 1, rate, false); clip.SetData(data, 0); return clip;
-    }
-
-    // knife swish: band of noise sweeping up then down
-    static AudioClip Swish(float seconds)
-    {
-        int rate = 44100, n = (int)(rate * seconds); var data = new float[n]; var rnd = new System.Random(21); float lp = 0, lp2 = 0;
-        for (int i = 0; i < n; i++)
-        {
-            float u = i / (float)n, env = Mathf.Sin(u * Mathf.PI) * Mathf.Sin(u * Mathf.PI);
-            float cut = Mathf.Lerp(0.02f, 0.25f, Mathf.Sin(u * Mathf.PI));
-            float noise = (float)(rnd.NextDouble() * 2 - 1);
-            lp += (noise - lp) * cut; lp2 += (lp - lp2) * cut;
-            data[i] = (lp - lp2) * env * 3f;
-        }
-        var clip = AudioClip.Create("swish", n, 1, rate, false); clip.SetData(data, 0); return clip;
-    }
+    // (sounds: CombatAudio.cs; dust, tracers, flash: CombatFx.cs)
 
     // scope picture: clear circle, black outside with a soft dark rim
     static Texture2D ScopeTexture(int n)
@@ -611,7 +526,7 @@ public class WeaponController : MonoBehaviour
         var small = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(h * 0.021f) };
         string ammo = W.melee ? "" : reloading ? "RELOADING" : $"{W.mag} / {W.reserve}";
         Shadowed(new Rect(w - 420, h - 110, 400, 90), $"{W.name}\n{ammo}", style);
-        Shadowed(new Rect(20, h - 70, 1500, 60), "LMB fire · RMB aim · R reload · Q/E lean · 1/2/3 weapon · F knife · V view · Shift sprint / hold breath · C crouch · Space jump" + (lastShot != "" ? $"   last: {lastShot}" : ""), small);
+        Shadowed(new Rect(20, h - 70, 1500, 60), "LMB fire · RMB aim · R reload · Q/E lean · X shoulder · 1/2/3 weapon · F knife · V view · Shift sprint / hold breath · C crouch · Z prone · Space jump" + (lastShot != "" ? $"   last: {lastShot}" : ""), small);
     }
 
     // white text with a dark shadow so it reads on bright stone and sky
