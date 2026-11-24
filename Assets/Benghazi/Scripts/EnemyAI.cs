@@ -650,7 +650,8 @@ public class EnemyAI : Damageable
         if (FirstHit(from, from + dir * 200f, out var h, false))
         {
             stop = h.point;
-            if (!hit && !(player && h.collider.transform.IsChildOf(player))) CombatFx.Impact(h, dir);
+            // a round that ends in a car holes the panel or breaks the pane, exactly as the player's does
+            if (!hit && !(player && h.collider.transform.IsChildOf(player)) && CarDamage.Hit(h, dir, false) != CarDamage.Glass) CombatFx.Impact(h, dir);
         }
         CombatFx.Tracer(from, stop, false);
         CombatFx.Muzzle(from, dir, false, false);
@@ -740,6 +741,7 @@ public class EnemyAI : Damageable
         health -= dmg * (head ? 2.5f : 1f);
         onHit?.Invoke(this);
         CombatFx.Impact(Surface.Flesh, point, -dir, dir, dmg > 100f);     // red mist and the thud of the hit
+        HitFeedback.EnemyHit(point, dir, head, health <= 0);              // his voice, blood on what is behind him
         if (health <= 0) { Die(dir, head); return; }
         float now = Time.time;
         staggerUntil = now + 0.35f; flinchUntil = now + 0.55f; hurtUntil = now + 4f; supp = Mathf.Min(1, supp + 0.5f);
@@ -757,6 +759,7 @@ public class EnemyAI : Damageable
         if (agent) agent.enabled = false;
         cc.enabled = false;
         CombatAudio.BodyFall(transform.position);
+        HitFeedback.EnemyDied(transform.position, dir, head);
         if (flash) flash.gameObject.SetActive(false);
         if (rifle) { rifle.localPosition = rifleLocalPos; rifle.localRotation = rifleLocalRot; }
         if (anim) { anim.SetFloat(VelX, 0); anim.SetFloat(VelZ, 0); anim.CrossFade(DeathClip(dir, head), 0.12f); }

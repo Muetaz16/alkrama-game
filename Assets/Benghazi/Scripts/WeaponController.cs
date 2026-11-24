@@ -328,9 +328,10 @@ public class WeaponController : MonoBehaviour
         if (hit)
         {
             var d = h.collider.GetComponentInParent<Damageable>();
+            int car = CarDamage.None;
             if (d) { d.Hit(W.damage, h.point, dir); hitMarker = 0.25f; hits++; }
-            else Hole(h);
-            if (!(d is EnemyAI)) CombatFx.Impact(h, dir, W.scope);      // a man shows his own hit (EnemyAI.Hit)
+            else if ((car = CarDamage.Hit(h, dir, W.scope)) == CarDamage.None) Hole(h);        // a car marks its own hole or broken pane
+            if (!(d is EnemyAI) && car != CarDamage.Glass) CombatFx.Impact(h, dir, W.scope);   // a man shows his own hit (EnemyAI.Hit); glass breaks, it does not spark
         }
         lastShot = hit ? $"{(h.collider.GetComponentInParent<Damageable>() ? "TARGET " : "")}{h.distance:F0} m" : "miss";
     }

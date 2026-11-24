@@ -63,6 +63,7 @@ public static class CityDetail
         var root = new GameObject("City Detail");
         Flush(root);
         RealCars.Spawn(root.transform);
+        CarColliders.Apply();           // the cars' real shape for bullets (holes on the bodywork, glass that breaks)
         foreach (var kv in carMarks)
         {
             var mk = new GameObject("CarMarker" + kv.Key).transform; mk.SetParent(root.transform, false);
