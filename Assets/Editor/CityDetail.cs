@@ -1,4 +1,4 @@
-// Street-level realism for the Corniche, placed from the real OSM streets and building footprints
+﻿// Street-level realism for the Corniche, placed from the real OSM streets and building footprints
 // (benghazi_corniche.json) and checked against the actual city with ray casts:
 //   streets: kerbs (black/white on the main roads), raised sidewalks, worn lane markings, cracks,
 //            asphalt patches, manholes, shell craters, sand drifting against the kerbs
@@ -16,7 +16,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-public static class CityDetail
+public static partial class CityDetail
 {
     const string Root = "Assets/Benghazi", Gen = Root + "/Textures/Generated", Mats = Root + "/Materials", PH = Root + "/Textures/PolyHaven";
     const string MeshAsset = Root + "/Detail/CityDetail.asset";
@@ -25,7 +25,7 @@ public static class CityDetail
     static float R(float a, float b) => a + (b - a) * R();
 
     class Road { public List<Vector3> pts = new(); public float w, half; public string kind; public int id; }
-    class Bld { public List<Vector3> poly = new(); public bool ruined; public Vector3 c; public float area; }
+    class Bld { public List<Vector3> poly = new(); public bool ruined; public Vector3 c; public float area, h; public bool kit; }
     static List<Road> roads; static List<Bld> blds;
     static Vector3 roundabout; static Vector3 player;
     static int counts;
@@ -48,21 +48,29 @@ public static class CityDetail
         bool back = Physics.queriesHitBackfaces; Physics.queriesHitBackfaces = true;   // the exported road surface faces down
         Load();
         Textures();
+        WarTextures(); WarMeshes(); FarVisible.Clear(); keepOut.Clear(); ReviewViews.Clear();
         var p = GameObject.Find("Player"); player = p ? p.transform.position : new Vector3(9999, 0, 9999);
 
         RealCars.Init();
         HideWebCars();
+        LighthouseGrounds();             // first: it frees the ground round the tower and fences off the plinth
+        HeroBuildings();                 // the Tripo landmark ruins take over a few blocks (CityDetail.Hero.cs)
+        KitFacades();                    // real facades on the buildings near the play area (CityDetail.Kit.cs)
         Streets();
         Lamps();
         Poles();
         Cars();
         Checkpoint();
         Buildings();
+        WarFacades();
+        StreetDebris();
 
         Physics.queriesHitBackfaces = back;
         var root = new GameObject("City Detail");
         Flush(root);
         RealCars.Spawn(root.transform);
+        foreach (var h in heroPlaced) if (h) h.transform.SetParent(root.transform, true);
+        AtmosphereObject(root.transform);
         foreach (var kv in carMarks)
         {
             var mk = new GameObject("CarMarker" + kv.Key).transform; mk.SetParent(root.transform, false);
@@ -114,7 +122,7 @@ public static class CityDetail
         }
         foreach (Dictionary<string, object> b in (List<object>)map["buildings"])
         {
-            var bd = new Bld { ruined = b.TryGetValue("ruined", out var ru) && ru is bool rb && rb };
+            var bd = new Bld { ruined = b.TryGetValue("ruined", out var ru) && ru is bool rb && rb, h = b.TryGetValue("h", out var hv) ? System.Convert.ToSingle(hv) : 0f };
             foreach (var q in (List<object>)b["poly"]) bd.poly.Add(U(q));
             bd.c = bd.poly.Aggregate(Vector3.zero, (s, v) => s + v) / bd.poly.Count;
             float a = 0; for (int i = 0; i < bd.poly.Count; i++) { var u = bd.poly[i]; var v = bd.poly[(i + 1) % bd.poly.Count]; a += u.x * v.z - v.x * u.z; }
@@ -137,6 +145,7 @@ public static class CityDetail
                         list.Add((a, b, r));
                     }
             }
+        LoadWarData(map);
         Debug.Log($"[detail] {roads.Count} streets, {blds.Count} buildings, roundabout {roundabout}");
     }
     static readonly Dictionary<(int, int), List<(Vector3 a, Vector3 b, Road r)>> grid = new();
@@ -164,7 +173,8 @@ public static class CityDetail
     static bool Main(Road r) => r.kind == "primary" || r.kind == "secondary" || r.kind == "trunk" || r.kind == "tertiary" || r.kind == "primary_link";
 
     // ---------- what's under / in front of a point ----------
-    static bool IsPalm(Transform t) { for (; t; t = t.parent) if (t.name.Contains("palm")) return true; return false; }
+    // palms, and the Tripo landmarks: details of the neighbours must not be stuck onto a landmark as if it were their wall
+    static bool IsPalm(Transform t) { for (; t; t = t.parent) if (t.name.Contains("palm") || t.name.StartsWith("Landmark ")) return true; return false; }
     static string MatName(RaycastHit h)
     {
         var r = h.collider.GetComponent<Renderer>(); if (!r) return "";
@@ -200,6 +210,7 @@ public static class CityDetail
         y = h.point.y;
         if (y < -0.06f || y > 0.45f) return false;
         if (!allowPromenade && (m.StartsWith("Promenade") || m.StartsWith("LighthouseBase") || m.StartsWith("SeaWall"))) return false;
+        foreach (var (kc, kr) in keepOut) if (new Vector2(p.x - kc.x, p.z - kc.z).sqrMagnitude < kr * kr) return false;   // the lighthouse plinth, the zawiya
         return true;
     }
     static bool OnRoad(Vector3 p, out float y)
@@ -217,7 +228,7 @@ public static class CityDetail
         var mKerbB = Mat("KerbBlack", ph: "concrete_wall_008", c: new Color(0.11f, 0.11f, 0.11f), smooth: 0.2f);
         var mKerb = Mat("Kerb", ph: "concrete_wall_008", c: new Color(0.68f, 0.66f, 0.62f), smooth: 0.15f);
         var mWalk = Mat("Sidewalk", ph: "large_grey_tiles", c: new Color(0.93f, 0.88f, 0.8f), smooth: 0.18f, tile: 1.4f);
-        var mPaint = Mat("RoadPaint", tex: "WornPaint", c: new Color(0.92f, 0.91f, 0.86f), smooth: 0.35f, cutout: 0.45f);
+        var mPaint = Mat("RoadPaint", tex: "WornPaint", c: new Color(0.68f, 0.66f, 0.6f), smooth: 0.2f, cutout: 0.45f);   // years old, dusty
         var mCrack = Mat("Crack", tex: "Crack", c: Color.white, smooth: 0.1f, cutout: 0.4f);
         var mPatch = Mat("Patch", tex: "Patch", c: Color.white, smooth: 0.15f, cutout: 0.4f);
         var mSand = Mat("SandDrift", tex: "Sand", c: Color.white, smooth: 0.05f, transparent: true);
@@ -268,7 +279,7 @@ public static class CityDetail
                             }
                     }
                 // wear: cracks, patches, manholes, a few shell craters, sand against the kerbs
-                for (float s = R(2, 9); s < L; s += R(7, 14))
+                for (float s = R(2, 6); s < L; s += R(3.5f, 8))
                 {
                     var c = a + f * s + n * R(-r.half + 1, r.half - 1);
                     if (!OnRoad(c, out var ry) || NearSpecial(c, 0)) continue;
@@ -667,7 +678,7 @@ public static class CityDetail
                 Vertical(wallMid + n * 0.03f + Vector3.up * 0.8f, L + 0.05f, 1.6f, face, mGrime); grime++;
                 // ground floor on a street: rolled-down shop shutters with signs above
                 bool street = StreetEdge(mid + n * 2f, null, out var near) < 4f && near != null && Walkable(near);
-                if (street && !b.ruined && L > 4)
+                if (street && !b.ruined && !b.kit && L > 4)
                     for (float s = 1.8f; s < L - 1.6f; s += 3.6f)
                     {
                         if (R() > 0.45f) continue;
@@ -783,7 +794,7 @@ public static class CityDetail
             AssetDatabase.AddObjectToAsset(mesh, holder);
             var go = new GameObject(mesh.name); go.transform.SetParent(root.transform, false);
             go.isStatic = true;
-            go.layer = NoShadow.Contains(b.mat.name) ? 21 : 20;      // the camera stops drawing these at a distance (ThirdPersonCamera)
+            go.layer = NoShadow.Contains(b.mat.name) ? 21 : FarVisible.Contains(b.mat.name) ? 0 : KitMats.Contains(b.mat.name) ? KitLayer : 20;      // the camera stops drawing 20/21 at a distance (ThirdPersonCamera)
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var mr = go.AddComponent<MeshRenderer>(); mr.sharedMaterial = b.mat;
             if (b.mat.renderQueue >= (int)RenderQueue.Transparent - 50) mr.shadowCastingMode = ShadowCastingMode.Off;
@@ -832,7 +843,7 @@ public static class CityDetail
         Directory.CreateDirectory(Gen);
         var t = new System.Random(77);
         float N() => (float)t.NextDouble();
-        Write("WornPaint", 256, 256, (x, y) => { float v = Noise(x, y, 18, 3) * 0.7f + Noise(x, y, 5, 9) * 0.3f; return new Color(1, 1, 1, v > 0.32f ? 1 : 0); }, true);
+        Write("WornPaint", 256, 256, (x, y) => { float v = Noise(x, y, 18, 3) * 0.6f + Noise(x, y, 5, 9) * 0.25f + Noise(x, y, 60, 4) * 0.15f; float g = 0.75f + 0.25f * Noise(x, y, 7, 5); return new Color(g, g * 0.97f, g * 0.9f, v > 0.5f ? 1 : 0); }, true);   // mostly worn off
         // cracks: random branching walks
         var crack = new float[512, 512];
         for (int c = 0; c < 6; c++)

@@ -389,6 +389,25 @@ public class AutoTest : MonoBehaviour
             yield return Shot("showcase_lighthouse.png");
             log.WriteLine($"lighthouse at {lh}, viewed from {player.transform.position}");
         }
+        // the Tripo landmark ruins, each from the street in front of it
+        int li = 0;
+        foreach (var t in FindObjectsByType<Transform>(FindObjectsSortMode.None))
+        {
+            if (!t.name.StartsWith("Landmark ")) continue;
+            var rs = t.GetComponentsInChildren<Renderer>(); if (rs.Length == 0) continue;
+            var lb = rs[0].bounds; foreach (var r in rs) lb.Encapsulate(r.bounds);
+            var fwd = t.forward;
+            foreach (float back in new[] { 16f, 11f, 7f })
+            {
+                var spot = lb.center + fwd * (lb.extents.magnitude * 0.35f + back);
+                if (Physics.Raycast(spot + Vector3.up * 60, Vector3.down, out var hit, 80f) && hit.point.y < 1f && hit.point.y > -0.1f) { Teleport(hit.point + Vector3.up * 0.1f); break; }
+            }
+            yield return new WaitForSeconds(0.3f);
+            LookAt(lb.center + Vector3.up * lb.extents.y * 0.1f);
+            yield return new WaitForSeconds(0.6f);
+            yield return Shot($"landmark_{li++}_{t.name.Replace(' ', '_')}.png");
+            log.WriteLine($"{t.name}: {lb.size.x:F0} x {lb.size.y:F0} x {lb.size.z:F0} m, viewed from {player.transform.position}");
+        }
     }
 
     static Vector3 FindLighthouseInScene()

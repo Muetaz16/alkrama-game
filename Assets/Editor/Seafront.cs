@@ -1,4 +1,4 @@
-// The Corniche seafront, modelled on photos of Benghazi's Corniche:
+﻿// The Corniche seafront, modelled on photos of Benghazi's Corniche:
 //   beach     dry sand from the sea wall down past the breakwater rocks, wet dark sand sloping under the
 //             water (the water shader draws the surf line where they meet)
 //   railing   white balustrade on the sea wall (turned balusters, square posts, top rail), with gaps
@@ -46,6 +46,7 @@ public static class Seafront
         int balusters = Railing(map, half);
         var palmSpots = OldPalms();
         int median = Median(map, palmSpots);
+        palmSpots.Clear();                       // the owner wants no palms at all (the web palms stay hidden by OldPalms)
         int palms = Palms(palmSpots, root.transform);
         Flush(root);
         Physics.SyncTransforms();

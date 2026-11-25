@@ -26,7 +26,7 @@ public class ThirdPersonCamera : MonoBehaviour
         if (target) yaw = target.yaw;
         // small street detail is not worth drawing far away: layer 20 = props (kerbs, rubble, poles), 21 = flat marks (cracks, paint)
         var c = GetComponent<Camera>();
-        if (c) { var d = new float[32]; d[20] = 190f; d[21] = 110f; c.layerCullDistances = d; c.layerCullSpherical = true; }
+        if (c) { var d = new float[32]; d[20] = 190f; d[21] = 110f; d[22] = 280f; /* 22 = building kit facades */ c.layerCullDistances = d; c.layerCullSpherical = true; }
         if (!externalInput && Application.isFocused) { Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false; }
     }
 

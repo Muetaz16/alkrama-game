@@ -71,13 +71,17 @@ LookUpgrade.All       → SceneBuilder.Build (city GLB, sea, sun, URP, post FX)
                          → SoldierSetup.PlaceInScene
                          → LookUpgrade.Run (textures, materials, SSAO, water, sea floor, lighting)
                          → Seafront.Build   (beach, balustrade, palm median, real palms)
-                         → CityDetail.Build (kerbs, sidewalks, road marks/wear, lamps, poles, cars, checkpoints, shop fronts, rubble)
+                         → CityDetail.Build (kerbs, sidewalks, road marks/wear, lamps, poles, cars, checkpoints, shop fronts, rubble;
+                                             + CityDetail.War.cs: lighthouse grounds, war damage on the buildings, street debris, Atmosphere)
                          → LookPro.Build    (Poly Haven sky + scanned textures + scanned boulders)
                          → GameplaySetup.Run (weapons, health, NavMesh bake, enemy spawner, practice targets)
 SoldierSetup.BuildWindows → builds ../builds/win/Benghazi.exe
 ```
 
 Partial re-runs: `CityDetail.Run`, `Seafront.Run`, `LookPro.Run`, `GameplaySetup.NavOnly`.
+`LookUpgrade.War` = CityDetail + GameplaySetup + CinematicLook, then review shots `../unity_shots/war_*.png`
+(lighthouse from the road / from the ruins / aerial, and six Sabri street walls). Use it after changing
+`CityDetail.War.cs`, `CinematicLook.cs` or the lighthouse set-back.
 Debug tools: `NavDebug.Run` (top-down NavMesh picture), `ShowcaseShots.Run`, `FindSpot.Run`.
 
 ### Batch command (PowerShell)
@@ -139,6 +143,39 @@ afterwards so the owner's "BEST" kill record starts at 0.
 | `WeaponPickups.cs` | A dead fighter's rifle drops and can be taken with G (random part-used magazine + 0-3 spare ones). Starts itself. |
 | `AutoTest.cs` | The scripted play-test (section 4). Also: an inspection camera beside the weapon (`inspect_*.png`), wrist-reach, trigger-finger and foot-slip measures, `-gaitonly` / `-legacygait` / `-calgait` / `-gaitscale` switches. |
 
+| `Atmosphere.cs` | The air, built in code at start: dust motes in the light round the camera, low sand gusts rolling down the street, smoke columns with a fire glow over burning ruins (positions written by `CityDetail.War.cs`). |
+
+`Assets/Editor/CityDetail.Kit.cs` + **Blender building kit** (`Tools/blender/`):
+- `sabri_kit.py` builds 20 facade pieces by script in Blender 5.3 (one bay = 4 m x 3.2 m, the web facade grid):
+  Italian window with stone frame and louvred shutters, closed shutters, modern window with grille, broken
+  window, balcony with railing / solid parapet, shop (shutter down / half up), door, arch, three blown-through
+  walls showing the block work, two collapsed tops with rebar, parapet + cornice, floor band, base, corner stone.
+  Materials are named `Kit_*` and swapped for URP materials in Unity (plaster colours, shutter colours per building).
+  ```powershell
+  & "C:\Program Files\Blender Foundation\Blender 5.3\blender.exe" -b --factory-startup -P Tools/blender/sabri_kit.py -- Assets/Benghazi/Models/Kit/sabri_kit.glb
+  & "C:\Program Files\Blender Foundation\Blender 5.3\blender.exe" -b --factory-startup -P Tools/blender/preview_kit.py -- Assets/Benghazi/Models/Kit/sabri_kit.glb kit.png
+  ```
+- `KitFacades()` clads every building within `KitRadius` (240 m) of the player start: bays stretched to fit each
+  wall and floors to fit the height, one style per building (Italian / modern / old shuttered), shops and a door
+  on street sides, more holes, broken windows and collapsed tops on ruined blocks. The kit sits over the web
+  box (which still shows beyond 280 m: kit meshes are on layer 22, culled by `ThirdPersonCamera`).
+  ~280 buildings, ~4.3k bays, ~2.3 M triangles. To add a piece: model it in `sabri_kit.py`, use its name in `KitFacades`.
+
+`Assets/Editor/CityDetail.War.cs` (second half of `CityDetail`, same merged batches):
+- **Lighthouse grounds** — the web city's tall 44 m podium, parapet and white steps are switched off; the tower
+  (Tripo scan, its old weathered colour untouched) stands on a low 25 m plinth of laid stone with a broken
+  parapet and steps to the sea, set back `LighthouseSetBack` = 10 m from the OSM spot away from the sea
+  (`SceneBuilder.FindLighthouse()` includes the set-back, `FindLighthouseMap()` is the raw spot). The Berenice
+  digs (OSM `ruins` areas) are rebuilt from the web boxes as walls of laid blocks and column drums, with dry
+  grass; the Sidi Khrebish zawiya + minaret stands ~44 m from the tower (as in the reference photos).
+- **Buildings** — balconies stacked on the window columns (facade tiles are 4 m x 3.2 m, so window centres are
+  known from the perimeter distance), railing or solid parapet, some broken and hanging with rebar; split AC
+  units, drain pipes, wires across side streets; bullet sprays, shell holes, soot over burnt windows,
+  Arabic graffiti (plain words only, atlas `Textures/Generated/Graffiti.png` made with System.Drawing);
+  ruined blocks get floor slabs hanging off the top and rubble heaps against the walls.
+- **Streets** — sand blown over the asphalt, bricks / chunks / paper / bottles along the kerbs.
+- Big pieces (balconies, plinth, zawiya, heaps) go on layer 0 so they are not distance-culled (`FarVisible`).
+
 `Assets/Editor/` — the generators listed in section 3, plus `RealCars.cs` (downloaded car models → colour /
 shot-up / burnt variants, LODs) and `ProjectSetup.cs` (package install).
 
@@ -193,12 +230,16 @@ Working and play-tested (0 exceptions, ~100–140 fps):
 - First person with gloved arms holding real AK-47 / VSS / KA-BAR; elite handling (lean, ready postures,
   tactical/emergency reloads), real ballistics and recoil.
 - Enemies with NavMesh, cover, flanking, grenades; health, drowning, kill record.
+- War-torn Sabri: balconies, AC units, wires, bullet sprays, shell holes, soot, graffiti, hanging slabs, rubble
+  heaps, sand on the streets; lighthouse on a low stone plinth among the Berenice ruins with the zawiya nearby;
+  late-afternoon grade, dusty haze, dust motes, sand gusts and smoke columns over the city.
 
 Known weak spots / good next steps:
 1. **Enemy movement feel** — owner judged it "still way off"; the JS prototype's enemies felt better. The
    behaviour has been ported (see `EnemyAI.cs` header) but needs play-testing and tuning with the owner.
-2. Buildings are still the web export's boxy blocks with painted facades — next big visual upgrade
-   (detailed Italian arcades / war-damaged multi-storey blocks like the reference photos).
+2. Buildings near the play area now have real kit facades; beyond 240 m they are still the web blocks. Next: hero buildings
+   from the owner's reference photos (Tripo models), e.g. the honeycomb-facade block and the arcaded palace.
+   The owner declined a new sunset sky download, so the light is still the midday HDR sky with a warmer grade.
 3. Burnt cars are a single rust colour; sunlit walls a bit over-yellow.
 4. Sniper scope sway makes the auto-test's 160 m shot hit or miss at random (realistic, hold Shift).
 5. `CityDetail.asset` is 56 MB (GitHub warns over 50 MB) — could be split or moved to LFS.

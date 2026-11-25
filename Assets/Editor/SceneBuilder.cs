@@ -141,7 +141,9 @@ public static class SceneBuilder
 
     // lighthouse spot from the exported game data; the web game uses x east / z south and
     // glTFast mirrors x on import, so a web point (x, z) is (-x, z) here
-    public static Vector3 FindLighthouse()
+    // where the tower stands in the game: the map spot, set back from the sea by CityDetail.LighthouseSetBack
+    public static Vector3 FindLighthouse() => FindLighthouseMap() + CityDetail.LighthouseShift();
+    public static Vector3 FindLighthouseMap()
     {
         var json = File.ReadAllText(Root + "/Data/benghazi_corniche_spawns.json");
         var data = JsonUtility.FromJson<Spawns>(json);

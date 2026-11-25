@@ -1,4 +1,4 @@
-// Cinematic rendering pass: configuration only. Nothing in the scene is deleted or regenerated, no new assets.
+﻿// Cinematic rendering pass: configuration only. Nothing in the scene is deleted or regenerated, no new assets.
 //   Unity.exe -batchmode -quit -projectPath <proj> -executeMethod CinematicLook.Run
 //
 // What it touches (all found, never created, except post-FX overrides inside the existing profile):
@@ -54,14 +54,15 @@ public static class CinematicLook
     // and moving it would put the shadows at odds with the visible sun. Set > 0 to force an elevation anyway
     // (the compass direction is kept).
     static readonly float SunElevationOverrideDeg = 0f;
-    const float SunIntensity = 1.6f;
-    static readonly Color SunColor = new Color(1f, 0.955f, 0.885f);      // less yellow than before (README 9.3)
+    const float SunIntensity = 1.55f;
+    static readonly Color SunColor = new Color(1f, 0.925f, 0.82f);       // late afternoon; the yellow is taken out of the walls by the hue curve, not the sun
     const float SunShadowStrength = 0.93f;
     const float AmbientIntensity = 1.25f;                                  // sky fill: ACES darkens the shade a lot, it needs the light
 
     // Haze: sky-horizon blue pulled 30 % toward dust, slightly denser (100 m: 10 %, 200 m: 34 %, 300 m: 60 %).
-    const float FogDensity = 0.0032f;
-    static readonly Color FogColor = new Color(0.69f, 0.72f, 0.81f);
+    // dust in the air of a city at war: warm grey haze (100 m: 15 %, 200 m: 50 %)
+    const float FogDensity = 0.0042f;
+    static readonly Color FogColor = new Color(0.76f, 0.73f, 0.67f);
 
     // Exposure. URP has no auto exposure; this is a fixed offset in stops, applied before ACES.
     // Worked out for: sunlit pale wall ~0.86, sunlit white ~0.90, wall in shade ~0.55 (display values).
@@ -255,20 +256,21 @@ public static class CinematicLook
         // saturation pulled back so sky and sand stop looking like poster paint
         var ca = Get<ColorAdjustments>(profile);
         ca.postExposure.Override(PostExposure);
-        ca.contrast.Override(-6f);              // ACES brings its own contrast
-        ca.saturation.Override(-6f);
+        ca.contrast.Override(4f);               // a little more bite than plain ACES: film, not video
+        ca.saturation.Override(-10f);
         ca.hueShift.Override(0f);
         ca.colorFilter.Override(new Color(1f, 0.99f, 0.97f));
 
         var wb = Get<WhiteBalance>(profile);
-        wb.temperature.Override(3f);          // was +8, part of the over-yellow walls
+        wb.temperature.Override(5f);          // warm, short of the old +8 that made the walls too yellow
         wb.tint.Override(0f);
 
         // shade takes a trace of the sky, sun keeps a trace of warmth: what daylight does, well short of teal/orange
         var smh = Get<ShadowsMidtonesHighlights>(profile);
-        smh.shadows.Override(new Vector4(0.97f, 0.99f, 1.03f, 0f));
+        // the cinema split: shade a little cool, sunlight a little warm
+        smh.shadows.Override(new Vector4(0.95f, 0.99f, 1.05f, -0.02f));
         smh.midtones.Override(new Vector4(1f, 1f, 1f, 0f));
-        smh.highlights.Override(new Vector4(1.03f, 1.0f, 0.97f, 0f));
+        smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.95f, 0f));
         smh.shadowsStart.Override(0f); smh.shadowsEnd.Override(0.3f);
         smh.highlightsStart.Override(0.55f); smh.highlightsEnd.Override(1f);
 
@@ -283,14 +285,14 @@ public static class CinematicLook
         var curves = Get<ColorCurves>(profile);
         curves.hueVsSat.Override(new TextureCurve(new[]
         {
-            new Keyframe(0.06f, 0.5f), new Keyframe(0.125f, 0.425f), new Keyframe(0.20f, 0.5f),
+            new Keyframe(0.06f, 0.5f), new Keyframe(0.125f, 0.47f), new Keyframe(0.20f, 0.5f),
             new Keyframe(0.50f, 0.5f), new Keyframe(0.60f, 0.45f), new Keyframe(0.70f, 0.5f),
         }, 0.5f, true, new Vector2(0f, 1f)));
 
         // bloom only from what is really hot (sky, glints, muzzle flash, white plaster in full sun)
         var bloom = Get<Bloom>(profile);
         bloom.threshold.Override(1.3f);       // gamma space: about 1.8 in linear light
-        bloom.intensity.Override(0.22f);
+        bloom.intensity.Override(0.28f);
         bloom.scatter.Override(0.6f);
         bloom.tint.Override(Color.white);
         bloom.highQualityFiltering.Override(true);
@@ -300,13 +302,13 @@ public static class CinematicLook
         var vig = Get<Vignette>(profile);
         vig.color.Override(Color.black);
         vig.center.Override(new Vector2(0.5f, 0.5f));
-        vig.intensity.Override(0.22f);
+        vig.intensity.Override(0.28f);
         vig.smoothness.Override(0.4f);
         vig.rounded.Override(false);
 
         var grain = Get<FilmGrain>(profile);
         grain.type.Override(FilmGrainLookup.Thin1);
-        grain.intensity.Override(0.18f);
+        grain.intensity.Override(0.22f);
         grain.response.Override(0.8f);        // grain mostly in shade and midtones, like film
 
         var chroma = Get<ChromaticAberration>(profile);
@@ -338,8 +340,8 @@ public static class CinematicLook
 
         Debug.Log($"[cinematic] post FX profile '{AssetDatabase.GetAssetPath(profile)}': {empty} empty slots removed, {stored} unsaved overrides stored in the asset, " +
                   $"{profile.components.Count - before} added, {profile.components.Count} total ({string.Join(", ", profile.components.Select(c => c.GetType().Name))})");
-        Debug.Log($"[cinematic] post FX values: ACES, exposure {F(PostExposure)} EV, contrast -6, saturation -6, white balance +3, hue-vs-sat dip on sand yellow and sky blue, " +
-                  "bloom 0.22 @ 1.3, vignette 0.22, grain Thin1 0.18, chromatic 0.04, motion blur 0.14 (camera+objects, clamp 0.03), " +
+        Debug.Log($"[cinematic] post FX values: ACES, exposure {F(PostExposure)} EV, contrast +4, saturation -10, white balance +5, split cool shade / warm sun, hue-vs-sat dip on sand yellow and sky blue, " +
+                  "bloom 0.28 @ 1.3, vignette 0.28, grain Thin1 0.22, chromatic 0.04, motion blur 0.14 (camera+objects, clamp 0.03), " +
                   "depth of field " + (dofAdded ? "added (Off, 55 mm f/4) for WeaponController" : "left as it was for WeaponController"));
     }
 

@@ -1,4 +1,4 @@
-// Real-world assets (Poly Haven, CC0) on top of the city:
+﻿// Real-world assets (Poly Haven, CC0) on top of the city:
 //   sky       photographed sky (kloofendal 48d partly cloudy) as the skybox and ambient light; the sun light
 //             is turned to where the sun is in the photo, fog takes the colour of its horizon
 //   surfaces  2K scanned textures with roughness on asphalt, promenade, sea wall, beach, kerbs, sidewalks,
@@ -116,7 +116,7 @@ public static class LookPro
     static void Surfaces()
     {
         int n = 0;
-        n += Apply("Asphalt", "asphalt_02", new Color(0.4f, 0.4f, 0.42f));            // dark, almost black, as the road was
+        n += Apply("Asphalt", "worn_asphalt", new Color(0.44f, 0.43f, 0.42f));         // dark as the road was, but old: worn, cracked, faded
         n += Apply("Promenade", "precast_stone_paving", new Color(1.05f, 1.02f, 0.97f));
         n += Apply("SeaWall", "painted_plaster_wall", new Color(1.08f, 1.06f, 1.02f));
         n += Apply("Sand", "coast_sand_02", new Color(1.02f, 0.96f, 0.86f));

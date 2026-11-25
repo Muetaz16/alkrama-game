@@ -1,4 +1,4 @@
-// Makes the Corniche look real: scanned textures (Poly Haven, CC0) on ground, roads, walls and rocks,
+﻿// Makes the Corniche look real: scanned textures (Poly Haven, CC0) on ground, roads, walls and rocks,
 // a sea floor that slopes away from the shore, the Benghazi/Water shader, better palm fronds,
 // ambient occlusion and sky reflections.
 //   Unity.exe -batchmode -quit -projectPath <proj> -executeMethod LookUpgrade.Run
@@ -26,6 +26,49 @@ public static class LookUpgrade
         GameplaySetup.Run();
         CinematicLook.Apply();          // post-processing stored in the profile asset, soft shadows, grade (see CinematicLook.cs)
         EditorSceneManager.SaveScene(scene);
+    }
+
+    // Only the passes the war detail / lighthouse grounds / look touch, then review shots (../unity_shots/war_*.png):
+    //   Unity.exe -batchmode -quit -projectPath <proj> -executeMethod LookUpgrade.War
+    public static void War()
+    {
+        var scene = EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
+        Seafront.Build();
+        CityDetail.Build();
+        LookPro.Build();
+        GameplaySetup.Run();
+        CinematicLook.Apply();
+        RetintFacades();
+        EditorSceneManager.SaveScene(scene);
+        AssetDatabase.SaveAssets();
+        var cam = Object.FindObjectsByType<Camera>(FindObjectsInactive.Include).FirstOrDefault(c => c.CompareTag("MainCamera")) ?? Object.FindFirstObjectByType<Camera>();
+        var player = GameObject.Find("Player"); bool was = player && player.activeSelf; if (player) player.SetActive(false);
+        cam.fieldOfView = 60f; cam.aspect = 16f / 9f;
+        ShaderUtil.allowAsyncCompilation = false;            // no cyan stand-in shaders in the first shot
+        var lh = SceneBuilder.FindLighthouse(); var sea = CityDetail.SeaDirection(); var side = Vector3.Cross(Vector3.up, sea);
+        void Shot(Vector3 eye, Vector3 at, string file) { cam.transform.position = eye; cam.transform.LookAt(at); SceneBuilder.Shoot(cam, file); }
+        Shot(lh + sea * 48f + side * 14f + Vector3.up * 1.7f, lh + Vector3.up * 9f, "war_lighthouse_road.png");
+        Shot(lh - sea * 45f - side * 25f + Vector3.up * 1.7f, lh + Vector3.up * 8f, "war_lighthouse_ruins.png");
+        Shot(lh + sea * 70f - side * 60f + Vector3.up * 40f, lh, "war_lighthouse_aerial.png");
+        foreach (var v in CityDetail.ReviewViews) Shot(v.eye, v.at, v.name);
+        if (player) player.SetActive(was);
+        Debug.Log($"[war] review shots: 3 lighthouse + {CityDetail.ReviewViews.Count} streets");
+    }
+
+    // the web-city facade materials take the tint of their variant (Facade_<tex>[_v<n>][_plain]): absolute, safe to repeat
+    static void RetintFacades()
+    {
+        int n = 0;
+        foreach (var guid in AssetDatabase.FindAssets("Facade_ t:Material", new[] { Mats }))
+        {
+            var m = AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(guid));
+            if (!m || !m.HasProperty("_BaseColor")) continue;
+            var mt = System.Text.RegularExpressions.Regex.Match(m.name, @"_v(\d+)");
+            int v = mt.Success ? int.Parse(mt.Groups[1].Value) : 0;
+            m.SetColor("_BaseColor", FacadeTints[v % FacadeTints.Length]); EditorUtility.SetDirty(m); n++;
+        }
+        AssetDatabase.SaveAssets();
+        Debug.Log($"[war] {n} web facade materials retinted to the ochre palette");
     }
 
     const string Root = "Assets/Benghazi";
@@ -296,7 +339,8 @@ public static class LookUpgrade
 
     // facade: keep the window texture, add real plaster grain on top (URP detail maps)
     // Benghazi walls are not one colour: sandstone, grey concrete, ochre, dusty white, pale beige
-    static readonly Color[] FacadeTints = { new(0.80f, 0.71f, 0.58f), new(0.70f, 0.68f, 0.64f), new(0.80f, 0.64f, 0.47f), new(0.86f, 0.83f, 0.76f), new(0.80f, 0.70f, 0.63f) };
+    // ochre, tan and sand like the streets of Sabri (the owner's reference photo)
+    public static readonly Color[] FacadeTints = { new(0.84f, 0.68f, 0.48f), new(0.74f, 0.62f, 0.5f), new(0.8f, 0.62f, 0.42f), new(0.88f, 0.78f, 0.62f), new(0.78f, 0.64f, 0.52f) };
     static Material Facade(Material src, int variant, bool maps = true)
     {
         var tex = src.GetTexture("baseColorTexture");
