@@ -15,7 +15,8 @@ public static partial class CityDetail
     // file, real width of the photographed front in metres, copies
     static readonly (string file, float width, int copies)[] Heroes =
     {
-        ("hero_tripo3", 26f, 2), ("hero_ruins", 30f, 3), ("hero_city", 22f, 3),     // hero_ruined left out: its base is missing, it reads as a slab
+        // switched off by the owner (floating pieces): the Tripo ruins are not placed. The lighthouse is separate and stays.
+        // To bring one back: ("hero_ruins", 30f, 3), ("hero_city", 22f, 3), ("hero_tripo3", 26f, 2)
     };
     static readonly List<GameObject> heroPlaced = new();
     static readonly List<List<Vector3>> cutPolys = new();
