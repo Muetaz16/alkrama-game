@@ -639,7 +639,7 @@ public static partial class CityDetail
                 // ruined blocks: floor slabs hanging off the wall top, rebar, and the heap of what fell
                 if (b.ruined && L > 5)
                 {
-                    int hang = !b.kit && R() < 0.7f ? 1 + rnd.Next(2) : 0;   // kit buildings have real collapsed tops
+                    int hang = 0;   // hanging slabs off: from a distance they read as floating pieces (owner)
                     for (int k = 0; k < hang; k++)
                     {
                         float sw = Mathf.Min(L - 1, R(3, 6)), s = R(sw / 2, L - sw / 2), y = Mathf.Max(FloorH, (floors - rnd.Next(2)) * FloorH - 0.1f);

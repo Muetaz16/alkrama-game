@@ -77,6 +77,19 @@ public static partial class CityDetail
         {
             int onCarriageway = b.poly.Count(p => StreetEdge(p, null, out _) < 0f) + (StreetEdge(b.c, null, out _) < 0f ? 2 : 0);
             bool remove = onCarriageway * 2 >= b.poly.Count + 2;
+            if (!remove)
+            {
+                // walk round the outside of the walls: if most of it is asphalt, the building stands out on the road
+                int samples = 0, asphalt = 0;
+                for (int i = 0; i < b.poly.Count; i++)
+                {
+                    var a = b.poly[i]; var e = b.poly[(i + 1) % b.poly.Count];
+                    var d = e - a; d.y = 0; float L = d.magnitude; if (L < 0.5f) continue;
+                    var n = new Vector3(-d.z, 0, d.x) / L; if (Vector3.Dot(n, (a + e) / 2 - b.c) < 0) n = -n;
+                    for (float s2 = 1f; s2 < L; s2 += 2f) { samples++; if (OnRoad(a + d / L * s2 + n * 2.5f, out _)) asphalt++; }
+                }
+                remove = samples >= 4 && asphalt >= samples * 0.6f;
+            }
             if (remove) onRoad++;
             else if (corniche.Count > 0 && coastPts.Count > 0)
             {
@@ -103,8 +116,38 @@ public static partial class CityDetail
         Debug.Log($"[hero] seaside cleared: {sea} buildings between the Corniche and the sea, {onRoad} standing in a road");
     }
 
+    static float PolyDist(List<Vector3> poly, Vector3 p)
+    {
+        if (Inside(poly, p)) return 0f;
+        float best = float.MaxValue;
+        for (int i = 0; i < poly.Count; i++)
+        {
+            var a = poly[i]; var b = poly[(i + 1) % poly.Count]; var ab = new Vector2(b.x - a.x, b.z - a.z); var ap = new Vector2(p.x - a.x, p.z - a.z);
+            float t = Mathf.Clamp01(Vector2.Dot(ap, ab) / Mathf.Max(ab.sqrMagnitude, 1e-4f));
+            best = Mathf.Min(best, (ap - ab * t).magnitude);
+        }
+        return best;
+    }
+
     static void CutCity(GameObject city)
     {
+        const float Reach = 6f;
+        var keepGrid = new Dictionary<(int, int), List<List<Vector3>>>();
+        foreach (var kb in blds)
+        {
+            int x0 = Mathf.FloorToInt((kb.poly.Min(p => p.x) - Reach) / 16), x1 = Mathf.FloorToInt((kb.poly.Max(p => p.x) + Reach) / 16);
+            int z0 = Mathf.FloorToInt((kb.poly.Min(p => p.z) - Reach) / 16), z1 = Mathf.FloorToInt((kb.poly.Max(p => p.z) + Reach) / 16);
+            for (int gx = x0; gx <= x1; gx++) for (int gz = z0; gz <= z1; gz++) { if (!keepGrid.TryGetValue((gx, gz), out var l)) keepGrid[(gx, gz)] = l = new(); l.Add(kb.poly); }
+        }
+        bool Owned(Vector3 c)
+        {
+            float dCut = float.MaxValue;
+            foreach (var poly in cutPolys) dCut = Mathf.Min(dCut, PolyDist(poly, c));
+            if (dCut > Reach) return false;
+            float dKeep = float.MaxValue;
+            if (keepGrid.TryGetValue((Mathf.FloorToInt(c.x / 16), Mathf.FloorToInt(c.z / 16)), out var near)) foreach (var poly in near) dKeep = Mathf.Min(dKeep, PolyDist(poly, c));
+            return dCut + 0.05f < dKeep;
+        }
         AssetDatabase.DeleteAsset(CutAsset);
         if (cutPolys.Count == 0) return;
         var holder = new Mesh { name = "CityCut" }; AssetDatabase.CreateAsset(holder, CutAsset);
@@ -115,7 +158,7 @@ public static partial class CityDetail
             var M = mf.transform.localToWorldMatrix;
             var wb = new Bounds(M.MultiplyPoint3x4(src.bounds.center), Vector3.zero);
             for (int i = 0; i < 8; i++) wb.Encapsulate(M.MultiplyPoint3x4(src.bounds.center + Vector3.Scale(src.bounds.extents, new Vector3(i % 2 * 2 - 1, i / 2 % 2 * 2 - 1, i / 4 * 2 - 1))));
-            if (wb.max.y < 1f || !cutPolys.Any(poly => poly.Min(p => p.x) - 3f < wb.max.x && poly.Max(p => p.x) + 3f > wb.min.x && poly.Min(p => p.z) - 3f < wb.max.z && poly.Max(p => p.z) + 3f > wb.min.z)) continue;   // overlap: small pieces (window surrounds) too
+            if (wb.max.y < 1f || !cutPolys.Any(poly => poly.Min(p => p.x) - Reach < wb.max.x && poly.Max(p => p.x) + Reach > wb.min.x && poly.Min(p => p.z) - Reach < wb.max.z && poly.Max(p => p.z) + Reach > wb.min.z)) continue;   // overlap: small pieces (window surrounds) too
             var v = src.vertices; var subs = new List<int[]>(); int removed = 0;
             for (int s = 0; s < src.subMeshCount; s++)
             {
@@ -126,20 +169,7 @@ public static partial class CityDetail
                     var c = (p0 + p1 + p2) / 3f;
                     if (c.y > 0.3f)
                     {
-                        var nt = Vector3.Cross(p1 - p0, p2 - p0).normalized;
-                        bool cutIt;
-                        if (Mathf.Abs(nt.y) > 0.7f)
-                            // roofs and floors: big triangles, so by their corners - all three on the lot (the lot's own
-                            // roof), or the centre inside it; the next building's roof keeps every triangle
-                            cutIt = InCutPoly(c) || cutPolys.Any(poly => NearPoly(poly, p0, 0.4f) && NearPoly(poly, p1, 0.4f) && NearPoly(poly, p2, 0.4f));
-                        else
-                        {
-                            // walls, parapets, awnings: by the centre with the margin, but the next building's wall that
-                            // faces into the lot and reaches the ground stays
-                            bool neighbourWall = Mathf.Abs(nt.y) < 0.3f && Mathf.Min(p0.y, Mathf.Min(p1.y, p2.y)) < 1.5f && InCutPoly(c + nt * 0.8f) && !InCutPoly(c - nt * 0.8f);
-                            cutIt = InCut(c) && !neighbourWall;
-                        }
-                        if (cutIt) { removed++; continue; }
+                        if (Owned(c)) { removed++; continue; }
                     }
                     keep.Add(t[k]); keep.Add(t[k + 1]); keep.Add(t[k + 2]);
                 }
