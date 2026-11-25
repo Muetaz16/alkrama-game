@@ -116,7 +116,7 @@ public static class LookPro
     static void Surfaces()
     {
         int n = 0;
-        n += Apply("Asphalt", "worn_asphalt", new Color(1.75f, 1.67f, 1.56f));        // the scan is dark (mean 58/255): lifted to the light warm grey of the sun-bleached, dusty road in the reference photo (~105/255) (the owner's reference photo)
+        n += Apply("Asphalt", "worn_asphalt", new Color(1.62f, 1.66f, 1.72f));        // the scan is dark (mean 58/255): lifted to the light warm grey of the sun-bleached, dusty road in the reference photo (~105/255) (the owner's reference photo)
         { var am = AssetDatabase.LoadAssetAtPath<Material>($"{Mats}/Asphalt.mat"); if (am) { am.SetFloat("_Smoothness", 0.25f); am.SetFloat("_BumpScale", 0.6f); EditorUtility.SetDirty(am); } }   // matte: old asphalt does not shine
         n += Apply("Promenade", "precast_stone_paving", new Color(1.05f, 1.02f, 0.97f));
         n += Apply("SeaWall", "painted_plaster_wall", new Color(1.08f, 1.06f, 1.02f));

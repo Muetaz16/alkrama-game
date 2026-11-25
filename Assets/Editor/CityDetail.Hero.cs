@@ -48,7 +48,7 @@ public static partial class CityDetail
             {
                 var a = poly[i]; var b = poly[(i + 1) % poly.Count]; var ab = new Vector2(b.x - a.x, b.z - a.z); var ap = new Vector2(p.x - a.x, p.z - a.z);
                 float t = Mathf.Clamp01(Vector2.Dot(ap, ab) / Mathf.Max(ab.sqrMagnitude, 1e-4f));
-                if ((ap - ab * t).sqrMagnitude < (p.y > 2.5f ? 9f : 0.36f)) return true;   // up high also the balconies and shop awnings that stuck out (3 m)
+                if ((ap - ab * t).sqrMagnitude < (p.y > 2.5f ? 2.25f : 0.36f)) return true;   // up high also the balconies and shop awnings that stuck out (3 m)
             }
         }
         return false;
@@ -75,7 +75,8 @@ public static partial class CityDetail
         int sea = 0, onRoad = 0;
         foreach (var b in blds.ToList())
         {
-            bool remove = StreetEdge(b.c, null, out _) < -0.5f;
+            int onCarriageway = b.poly.Count(p => StreetEdge(p, null, out _) < 0f) + (StreetEdge(b.c, null, out _) < 0f ? 2 : 0);
+            bool remove = onCarriageway * 2 >= b.poly.Count + 2;
             if (remove) onRoad++;
             else if (corniche.Count > 0 && coastPts.Count > 0)
             {
@@ -97,6 +98,7 @@ public static partial class CityDetail
             }
             if (!remove) continue;
             cutPolys.Add(b.poly); blds.Remove(b);
+            if (sea + onRoad <= 6) { var away = (new Vector3(b.c.x, 0, b.c.z) - new Vector3(player.x, 0, player.z)).normalized; ReviewViews.Add((new Vector3(b.c.x, 1.7f, b.c.z) - away * 25f, new Vector3(b.c.x, 6f, b.c.z), $"cleared_{sea + onRoad}.png")); Debug.Log($"[cleared] {sea + onRoad} at {b.c.x:F1} {b.c.z:F1} away {away.x:F3} {away.z:F3}"); }
         }
         Debug.Log($"[hero] seaside cleared: {sea} buildings between the Corniche and the sea, {onRoad} standing in a road");
     }
@@ -113,7 +115,7 @@ public static partial class CityDetail
             var M = mf.transform.localToWorldMatrix;
             var wb = new Bounds(M.MultiplyPoint3x4(src.bounds.center), Vector3.zero);
             for (int i = 0; i < 8; i++) wb.Encapsulate(M.MultiplyPoint3x4(src.bounds.center + Vector3.Scale(src.bounds.extents, new Vector3(i % 2 * 2 - 1, i / 2 % 2 * 2 - 1, i / 4 * 2 - 1))));
-            if (wb.max.y < 1f || !cutPolys.Any(poly => poly.Any(p => wb.Contains(new Vector3(p.x, wb.center.y, p.z))))) continue;
+            if (wb.max.y < 1f || !cutPolys.Any(poly => poly.Min(p => p.x) - 3f < wb.max.x && poly.Max(p => p.x) + 3f > wb.min.x && poly.Min(p => p.z) - 3f < wb.max.z && poly.Max(p => p.z) + 3f > wb.min.z)) continue;   // overlap: small pieces (window surrounds) too
             var v = src.vertices; var subs = new List<int[]>(); int removed = 0;
             for (int s = 0; s < src.subMeshCount; s++)
             {

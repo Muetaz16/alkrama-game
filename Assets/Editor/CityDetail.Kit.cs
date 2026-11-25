@@ -59,7 +59,7 @@ public static partial class CityDetail
         counts++;
     }
 
-    static int kitTris;
+    static int kitTris; static Transform cityRoot;
     static void Place(string piece, Vector3 at, Vector3 outward, Vector3 scale, Dictionary<string, Material> mats, bool collide = false)
     {
         if (!kit.TryGetValue(piece, out var kp)) return;
@@ -75,6 +75,7 @@ public static partial class CityDetail
     static void KitFacades()
     {
         if (!LoadKit()) return;
+        var cityGo = GameObject.Find("Benghazi Corniche"); cityRoot = cityGo ? cityGo.transform : null;
         kitTris = 0; KitMats.Clear();
         Material K(Material m) { KitMats.Add(m.name); return m; }
         // ochre, tan and sand plaster like the streets of Sabri, about half of it peeling (damaged_plaster)
@@ -126,7 +127,8 @@ public static partial class CityDetail
                 int bays = Mathf.Max(1, Mathf.RoundToInt(L / TileW)); float bw = L / bays, sx = bw / TileW;
                 int doorAt = street && bays >= 3 ? rnd.Next(bays) : -1;
                 // a piece only where the old wall really stands behind it (cut, collapsed or missing walls get nothing)
-                bool WallAt(Vector3 at, float y) => Ray(at + n * 1.2f + Vector3.up * y, -n, 1.9f, out var wh2) && Vector3.Dot(wh2.normal, n) > 0.6f;
+                bool WallAt(Vector3 at, float y) => Ray(at + n * 1.2f + Vector3.up * y, -n, 1.9f, out var wh2) && Vector3.Dot(wh2.normal, n) > 0.6f
+                    && cityRoot && wh2.collider.transform.IsChildOf(cityRoot) && Mathf.Abs(Vector3.Dot(wh2.point - at, n)) < 0.35f;
                 for (int j = 0; j < bays; j++)
                 {
                     var o = a + f * (bw * (j + 0.5f)) + n * inset; o.y = 0;
