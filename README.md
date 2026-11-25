@@ -21,6 +21,7 @@ Built to show investors. Tone: realistic, grounded, Call of Duty / Battlefield f
 | Packages | glTFast 6.20, Input System 1.20, AI Navigation 2.0.16, Cinemachine 6.6 (see `Packages/manifest.json`) |
 | Git LFS | **Required.** All `*.fbx` are in LFS (`Soldier.fbx` is 112 MB). Run `git lfs install` before cloning. |
 | OS used so far | Windows 11, RTX 4050 laptop — ~140 fps at 1600×900 |
+| **After cloning** | `Assets/Benghazi/Detail/CityDetail.asset` (~450 MB, generated) is **not in git** (GitHub limit). Run `LookUpgrade.War` once (batch command in section 3, ~5 min) before playing or building, or the street detail, kit facades and landmarks are missing. |
 
 ```bash
 git lfs install
