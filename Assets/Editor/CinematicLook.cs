@@ -54,15 +54,15 @@ public static class CinematicLook
     // and moving it would put the shadows at odds with the visible sun. Set > 0 to force an elevation anyway
     // (the compass direction is kept).
     static readonly float SunElevationOverrideDeg = 0f;
-    const float SunIntensity = 1.55f;
-    static readonly Color SunColor = new Color(1f, 0.925f, 0.82f);       // late afternoon; the yellow is taken out of the walls by the hue curve, not the sun
+    const float SunIntensity = 1.45f;
+    static readonly Color SunColor = new Color(1f, 0.74f, 0.5f);         // sunset: low and orange (the sky photo is a sunset too)
     const float SunShadowStrength = 0.93f;
     const float AmbientIntensity = 1.25f;                                  // sky fill: ACES darkens the shade a lot, it needs the light
 
     // Haze: sky-horizon blue pulled 30 % toward dust, slightly denser (100 m: 10 %, 200 m: 34 %, 300 m: 60 %).
     // dust in the air of a city at war: warm grey haze (100 m: 15 %, 200 m: 50 %)
-    const float FogDensity = 0.0042f;
-    static readonly Color FogColor = new Color(0.76f, 0.73f, 0.67f);
+    const float FogDensity = 0.0046f;
+    static readonly Color FogColor = new Color(0.8f, 0.66f, 0.52f);        // golden dust against the low sun
 
     // Exposure. URP has no auto exposure; this is a fixed offset in stops, applied before ACES.
     // Worked out for: sunlit pale wall ~0.86, sunlit white ~0.90, wall in shade ~0.55 (display values).
@@ -398,6 +398,10 @@ public static class CinematicLook
         log.Add(D("reflections", F(RenderSettings.reflectionIntensity), F(1f))); RenderSettings.reflectionIntensity = 1f;
         RenderSettings.defaultReflectionMode = DefaultReflectionMode.Skybox;
         log.Add(D("sky reflection size", RenderSettings.defaultReflectionResolution, 256)); RenderSettings.defaultReflectionResolution = 256;
+        // the sunset photo, warmed and a little darker so the sky glows gold instead of washing out white
+        if (RenderSettings.skybox.HasProperty("_Tint")) RenderSettings.skybox.SetColor("_Tint", new Color(0.6f, 0.49f, 0.4f));
+        if (RenderSettings.skybox.HasProperty("_Exposure")) RenderSettings.skybox.SetFloat("_Exposure", 0.9f);
+        EditorUtility.SetDirty(RenderSettings.skybox);
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.ExponentialSquared;
         log.Add(D("fog density", F(RenderSettings.fogDensity), F(FogDensity))); RenderSettings.fogDensity = FogDensity;

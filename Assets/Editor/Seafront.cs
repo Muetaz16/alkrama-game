@@ -232,8 +232,8 @@ public static class Seafront
     // ---------- median on the Corniche road ----------
     static int Median(Dictionary<string, object> map, List<(Vector3 pos, float h, int kind)> palmSpots)
     {
-        var kerb = Mat("MedianKerb", ph: "concrete_wall_008", c: new Color(0.9f, 0.89f, 0.85f), smooth: 0.2f);
-        var soil = Mat("MedianGrass", tex: "Grass", c: Color.white, smooth: 0.05f);
+        var kerb = Mat("MedianKerb", ph: "concrete_wall_008", c: new Color(0.6f, 0.58f, 0.55f), smooth: 0.12f);
+        var soil = Mat("MedianGrass", tex: "Grass", c: new Color(0.62f, 0.5f, 0.38f), smooth: 0.03f);   // bare dusty earth, nothing grows
         var shrub = FrondMat("ShrubLeaves", "FrondGreen");
         var bush = Bush(); Save(bush);
         Vector3 rb = new Vector3(1e6f, 0, 1e6f);
@@ -265,12 +265,7 @@ public static class Seafront
                     float y = GroundY(c); if (y > 0.5f || y < -0.1f) continue;
                     Box(c + Vector3.up * (y + 0.12f), new Vector3(2.4f, 0.24f, 3.02f), rot, kerb, true);
                     Box(c + Vector3.up * (y + 0.245f), new Vector3(2.05f, 0.02f, 3.02f), rot, soil);
-                    for (int i = 0; i < 2; i++)
-                    {
-                        float sz = R(0.7f, 1.15f);
-                        var sp = c + f * R(-1.1f, 1.1f) + Vector3.Cross(Vector3.up, f) * R(-0.5f, 0.5f);
-                        Add(bush, Matrix4x4.TRS(sp + Vector3.up * (y + 0.24f), Quaternion.Euler(0, R(0, 360), 0), Vector3.one * sz), shrub, false);
-                    }
+                    // no plants on the road any more (the owner): bare earth and litter in the median
                     if (Mathf.Repeat(g, 12f) < 3f) palmSpots.Add((c + Vector3.up * (y + 0.24f), R(7f, 10f), 0));
                     pieces++;
                 }

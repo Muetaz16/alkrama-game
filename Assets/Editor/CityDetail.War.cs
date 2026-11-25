@@ -57,9 +57,14 @@ public static partial class CityDetail
     public static Vector3 SeaDirection() { ReadLighthouse(); return seaCache.Value; }
     public static Vector3 LighthouseShift() => -SeaDirection() * LighthouseSetBack;
 
+    static readonly List<Vector3> coastPts = new();
     static void LoadWarData(Dictionary<string, object> map)
     {
-        ruinsPolys.Clear();
+        ruinsPolys.Clear(); coastPts.Clear();
+        if (map.TryGetValue("coast", out var co))
+            foreach (var run in (List<object>)co)
+                foreach (var q in (List<object>)run)
+                { var v = (List<object>)q; var p = new Vector3(-System.Convert.ToSingle(v[0]), 0, System.Convert.ToSingle(v[1])); if (p.magnitude < 1500f) coastPts.Add(p); }
         foreach (Dictionary<string, object> l in (List<object>)map["landmarks"])
             if ((string)l["type"] == "ruins" && l.TryGetValue("poly", out var po))
                 ruinsPolys.Add(((List<object>)po).Select(q => { var v = (List<object>)q; return new Vector3(-System.Convert.ToSingle(v[0]), 0, System.Convert.ToSingle(v[1])); }).ToList());
@@ -642,6 +647,9 @@ public static partial class CityDetail
                         float ang = R(30, 75), dep = R(2f, 3.5f);
                         var outDir = (n * Mathf.Cos(ang * Mathf.Deg2Rad) - Vector3.up * Mathf.Sin(ang * Mathf.Deg2Rad)).normalized;
                         var pivot = W(s, y, -0.2f);
+                        // only off a wall that is really there just below (not a cut lot, not a gap in the old box)
+                        var wallBelow = W(s, y - 1.2f, 0f);
+                        if (cutPolys.Any(cp => NearPoly(cp, pivot, 3f)) || !Ray(wallBelow + n * 1.2f, -n, 1.8f, out var wb2) || Vector3.Dot(wb2.normal, n) < 0.6f) continue;
                         Box(pivot + outDir * dep / 2, new Vector3(sw, 0.22f, dep), Quaternion.LookRotation(outDir, Vector3.Cross(outDir, f)), mConc);
                         for (int r = 0; r < 9; r++)
                         {

@@ -19,6 +19,37 @@ tris0 = sum(len(p.vertices) - 2 for p in ob.data.polygons)
 if tris0 > budget:
     m = ob.modifiers.new("dec", "DECIMATE"); m.ratio = budget / tris0; m.use_collapse_triangulate = True
     bpy.ops.object.modifier_apply(modifier=m.name)
+# Tripo turns thin things in a photo (poles, wires, a frame) into loose bits floating in the air: drop every loose
+# part that is small and does not reach the ground
+import bmesh
+bm = bmesh.new(); bm.from_mesh(ob.data); bm.verts.ensure_lookup_table()
+zs = [v.co.z for v in bm.verts]; z0, H = min(zs), max(zs) - min(zs)
+# connected parts by position: the mesh is split at every UV seam, so vertices at the same spot count as one
+parent = list(range(len(bm.verts)))
+def find(i):
+    while parent[i] != i: parent[i] = parent[parent[i]]; i = parent[i]
+    return i
+def union(a, b):
+    ra, rb = find(a), find(b)
+    if ra != rb: parent[ra] = rb
+at = {}
+for v in bm.verts:
+    key = (round(v.co.x * 2000), round(v.co.y * 2000), round(v.co.z * 2000))
+    if key in at: union(v.index, at[key])
+    else: at[key] = v.index
+for e in bm.edges: union(e.verts[0].index, e.verts[1].index)
+groups = {}
+for v in bm.verts: groups.setdefault(find(v.index), []).append(v)
+parts = list(groups.values())
+total = len(bm.faces); dropped = 0
+for comp in parts:
+    faces = {f for v in comp for f in v.link_faces}
+    low = min(v.co.z for v in comp)
+    if low > z0 + 0.06 * H and len(faces) < 0.04 * total:
+        bmesh.ops.delete(bm, geom=list(faces), context="FACES"); dropped += len(faces)
+bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+bm.to_mesh(ob.data); bm.free(); ob.data.update()
+print(f"[hero] loose floating bits removed: {dropped} faces in {len(parts)} parts checked")
 tris1 = sum(len(p.vertices) - 2 for p in ob.data.polygons)
 # on the ground, centred (Blender z up)
 vs = [ob.matrix_world @ v.co for v in ob.data.vertices]

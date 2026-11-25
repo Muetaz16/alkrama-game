@@ -24,7 +24,7 @@ public static partial class CityDetail
     static float R() => (float)rnd.NextDouble();
     static float R(float a, float b) => a + (b - a) * R();
 
-    class Road { public List<Vector3> pts = new(); public float w, half; public string kind; public int id; }
+    class Road { public List<Vector3> pts = new(); public float w, half; public string kind, name; public int id; }
     class Bld { public List<Vector3> poly = new(); public bool ruined; public Vector3 c; public float area, h; public bool kit; }
     static List<Road> roads; static List<Bld> blds;
     static Vector3 roundabout; static Vector3 player;
@@ -116,7 +116,7 @@ public static partial class CityDetail
         int id = 0;
         foreach (Dictionary<string, object> r in (List<object>)map["roads"])
         {
-            var rd = new Road { w = System.Convert.ToSingle(r["w"]), kind = (string)r["kind"], id = id++ };
+            var rd = new Road { w = System.Convert.ToSingle(r["w"]), kind = (string)r["kind"], name = r.TryGetValue("name", out var rn) ? rn as string ?? "" : "", id = id++ };
             rd.half = rd.w / 2 + 1.6f;                       // the web game draws roads this wide
             foreach (var q in (List<object>)r["pts"]) rd.pts.Add(U(q));
             roads.Add(rd);
@@ -225,8 +225,8 @@ public static partial class CityDetail
     // ---------- streets ----------
     static void Streets()
     {
-        var mKerbW = Mat("KerbWhite", ph: "concrete_wall_008", c: new Color(0.92f, 0.91f, 0.87f), smooth: 0.2f);
-        var mKerbB = Mat("KerbBlack", ph: "concrete_wall_008", c: new Color(0.11f, 0.11f, 0.11f), smooth: 0.2f);
+        var mKerbW = Mat("KerbWhite", ph: "concrete_wall_008", c: new Color(0.64f, 0.62f, 0.58f), smooth: 0.12f);   // old grey concrete, the paint long gone (reference photo)
+        var mKerbB = Mat("KerbBlack", ph: "concrete_wall_008", c: new Color(0.5f, 0.49f, 0.46f), smooth: 0.12f);
         var mKerb = Mat("Kerb", ph: "concrete_wall_008", c: new Color(0.68f, 0.66f, 0.62f), smooth: 0.15f);
         var mWalk = Mat("Sidewalk", ph: "large_grey_tiles", c: new Color(0.93f, 0.88f, 0.8f), smooth: 0.18f, tile: 1.4f);
         var mPaint = Mat("RoadPaint", tex: "WornPaint", c: new Color(0.68f, 0.66f, 0.6f), smooth: 0.2f, cutout: 0.45f);   // years old, dusty
@@ -862,7 +862,7 @@ public static partial class CityDetail
         Write("Patch", 256, 256, (x, y) =>
         {
             float dx = (x - 128) / 128f, dy = (y - 128) / 128f; float r = Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dy)) + (Noise(x, y, 12, 4) - 0.5f) * 0.25f;
-            float g = 0.16f + Noise(x, y, 40, 5) * 0.06f; return new Color(g, g * 0.98f, g * 0.95f, r < 0.85f ? 1 : 0);
+            float g = 0.34f + Noise(x, y, 40, 5) * 0.08f; return new Color(g, g * 0.97f, g * 0.93f, r < 0.85f ? 1 : 0);   // old patches, faded too
         }, false);
         Write("Sand", 64, 256, (x, y) =>
         {

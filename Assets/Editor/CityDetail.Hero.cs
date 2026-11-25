@@ -15,7 +15,7 @@ public static partial class CityDetail
     // file, real width of the photographed front in metres, copies
     static readonly (string file, float width, int copies)[] Heroes =
     {
-        ("hero_ruins", 30f, 3), ("hero_city", 22f, 3), ("hero_tripo3", 26f, 2),     // hero_ruined left out: its base is missing, it reads as a slab
+        ("hero_tripo3", 26f, 2), ("hero_ruins", 30f, 3), ("hero_city", 22f, 3),     // hero_ruined left out: its base is missing, it reads as a slab
     };
     static readonly List<GameObject> heroPlaced = new();
     static readonly List<List<Vector3>> cutPolys = new();
@@ -53,6 +53,53 @@ public static partial class CityDetail
         return false;
     }
 
+    static bool InCutPoly(Vector3 p) => cutPolys.Any(poly => Inside(poly, p));
+    static bool NearPoly(List<Vector3> poly, Vector3 p, float m)
+    {
+        if (Inside(poly, p)) return true;
+        for (int i = 0; i < poly.Count; i++)
+        {
+            var a = poly[i]; var b = poly[(i + 1) % poly.Count]; var ab = new Vector2(b.x - a.x, b.z - a.z); var ap = new Vector2(p.x - a.x, p.z - a.z);
+            float t = Mathf.Clamp01(Vector2.Dot(ap, ab) / Mathf.Max(ab.sqrMagnitude, 1e-4f));
+            if ((ap - ab * t).sqrMagnitude < m * m) return true;
+        }
+        return false;
+    }
+
+    // the Corniche must run free between the city and the sea: buildings on the sea side of it, or standing in a
+    // road, are taken out (cut from the city meshes like a landmark lot)
+    static void ClearSeaside()
+    {
+        var corniche = roads.Where(r => r.name == "كورنيش بنغازي").ToList();
+        int sea = 0, onRoad = 0;
+        foreach (var b in blds.ToList())
+        {
+            bool remove = StreetEdge(b.c, null, out _) < -0.5f;
+            if (remove) onRoad++;
+            else if (corniche.Count > 0 && coastPts.Count > 0)
+            {
+                Vector3 q = default; float best = float.MaxValue;
+                foreach (var r in corniche)
+                    for (int k = 0; k < r.pts.Count - 1; k++)
+                    {
+                        var a = r.pts[k]; var d = r.pts[k + 1] - a; d.y = 0; float L2 = Mathf.Max(d.sqrMagnitude, 1e-4f);
+                        float t = Mathf.Clamp01(Vector3.Dot(new Vector3(b.c.x - a.x, 0, b.c.z - a.z), d) / L2);
+                        var p = a + d * t; float dd = (new Vector3(b.c.x, 0, b.c.z) - new Vector3(p.x, 0, p.z)).sqrMagnitude;
+                        if (dd < best) { best = dd; q = new Vector3(p.x, 0, p.z); }
+                    }
+                if (best < 150f * 150f)
+                {
+                    var cp = coastPts.OrderBy(p => (p - q).sqrMagnitude).First();
+                    var toB = new Vector3(b.c.x, 0, b.c.z) - q; var toSea = cp - q;
+                    if (Vector3.Dot(toB, toSea) > 0 && toB.magnitude < toSea.magnitude + 10f) { remove = true; sea++; }
+                }
+            }
+            if (!remove) continue;
+            cutPolys.Add(b.poly); blds.Remove(b);
+        }
+        Debug.Log($"[hero] seaside cleared: {sea} buildings between the Corniche and the sea, {onRoad} standing in a road");
+    }
+
     static void CutCity(GameObject city)
     {
         AssetDatabase.DeleteAsset(CutAsset);
@@ -72,8 +119,25 @@ public static partial class CityDetail
                 var t = src.GetTriangles(s); var keep = new List<int>(t.Length);
                 for (int k = 0; k < t.Length; k += 3)
                 {
-                    var c = M.MultiplyPoint3x4((v[t[k]] + v[t[k + 1]] + v[t[k + 2]]) / 3f);
-                    if (c.y > 0.3f && InCut(c)) { removed++; continue; }
+                    var p0 = M.MultiplyPoint3x4(v[t[k]]); var p1 = M.MultiplyPoint3x4(v[t[k + 1]]); var p2 = M.MultiplyPoint3x4(v[t[k + 2]]);
+                    var c = (p0 + p1 + p2) / 3f;
+                    if (c.y > 0.3f)
+                    {
+                        var nt = Vector3.Cross(p1 - p0, p2 - p0).normalized;
+                        bool cutIt;
+                        if (Mathf.Abs(nt.y) > 0.7f)
+                            // roofs and floors: big triangles, so by their corners - all three on the lot (the lot's own
+                            // roof), or the centre inside it; the next building's roof keeps every triangle
+                            cutIt = InCutPoly(c) || cutPolys.Any(poly => NearPoly(poly, p0, 0.4f) && NearPoly(poly, p1, 0.4f) && NearPoly(poly, p2, 0.4f));
+                        else
+                        {
+                            // walls, parapets, awnings: by the centre with the margin, but the next building's wall that
+                            // faces into the lot and reaches the ground stays
+                            bool neighbourWall = Mathf.Abs(nt.y) < 0.3f && Mathf.Min(p0.y, Mathf.Min(p1.y, p2.y)) < 1.5f && InCutPoly(c + nt * 0.8f) && !InCutPoly(c - nt * 0.8f);
+                            cutIt = InCut(c) && !neighbourWall;
+                        }
+                        if (cutIt) { removed++; continue; }
+                    }
                     keep.Add(t[k]); keep.Add(t[k + 1]); keep.Add(t[k + 2]);
                 }
                 subs.Add(keep.ToArray());
@@ -117,11 +181,12 @@ public static partial class CityDetail
         foreach (var r in city.GetComponentsInChildren<MeshRenderer>(true))
             if (r.gameObject.name == HiddenTag) { r.enabled = true; if (r.TryGetComponent<Collider>(out var c)) c.enabled = true; r.gameObject.name = ""; }
         RestoreCut(city);
+        ClearSeaside();
         Physics.SyncTransforms();
         var lh = SceneBuilder.FindLighthouse();
 
         // street fronts that could take a landmark
-        var spots = new List<(Bld b, Vector3 mid, Vector3 n, float L, float depth, float inset)>();
+        var spots = new List<(Bld b, Vector3 mid, Vector3 n, float L, float depth, float inset, Road road)>();
         foreach (var b in blds)
         {
             int nP = b.poly.Count; if (nP < 3 || b.h < 6f) continue;
@@ -136,7 +201,7 @@ public static partial class CityDetail
                 if (!(StreetEdge(mid + n * 3f, null, out var near) < 5f && near != null)) continue;
                 if (!Ray(mid + n * 1.6f + Vector3.up * 2f, -n, 2.6f, out var wh) || Vector3.Dot(wh.normal, n) < 0.7f) continue;
                 float depth = b.poly.Max(p => Vector3.Dot(mid - p, n));
-                spots.Add((b, mid, n, L, depth, Vector3.Dot(wh.point - mid, n)));
+                spots.Add((b, mid, n, L, depth, Vector3.Dot(wh.point - mid, n), near));
             }
         }
 
@@ -154,7 +219,10 @@ public static partial class CityDetail
             for (int k = 0; k < copies; k++)
             {
                 // the closest fit in length, ruined blocks first, never next to another landmark
-                var best = spots.Where(s => s.L > width * 0.6f && s.L < width * 1.3f && !taken.Any(t => Vector3.Distance(t, s.mid) < HeroSpacing))
+                // the honeycomb ruin stands on the main road, where it is seen from the Corniche
+                bool mainOnly = file == "hero_tripo3" && k == 0;
+                var best = spots.Where(s => s.L > width * 0.6f && s.L < width * 1.35f && !taken.Any(t => Vector3.Distance(t, s.mid) < HeroSpacing)
+                                         && (!mainOnly || s.road.name == "كورنيش بنغازي" || Main(s.road)))
                                 .OrderBy(s => Mathf.Abs(s.L - width) / width + (s.b.ruined ? 0f : 0.25f) + R(0, 0.3f)).FirstOrDefault();
                 if (best.b == null) { Debug.LogWarning($"[hero] no street front left for {file} copy {k + 1}"); break; }
                 float s = best.L / mb.size.x;                                   // exactly the length of the wall: nothing pokes into the next block
@@ -163,7 +231,8 @@ public static partial class CityDetail
                 foreach (var r in city.GetComponentsInChildren<MeshRenderer>())
                 {
                     if (!r.enabled) continue; var bb = r.bounds;
-                    if (bb.max.y < 1.5f || bb.size.x > 60f || bb.size.z > 60f || !Inside(best.b.poly, bb.center)) continue;
+                    if (bb.max.y < 1.5f || bb.size.x > 60f || bb.size.z > 60f) continue;
+                    if (!Inside(best.b.poly, bb.center) && !(Mathf.Max(bb.size.x, bb.size.z) < 15f && bb.min.y > 1.8f && NearPoly(best.b.poly, bb.center, 3.5f))) continue;
                     r.enabled = false; if (r.TryGetComponent<Collider>(out var c)) c.enabled = false; r.gameObject.name = HiddenTag; off++;
                 }
                 var go = (GameObject)PrefabUtility.InstantiatePrefab(asset);

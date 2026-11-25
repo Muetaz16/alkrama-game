@@ -102,6 +102,7 @@ public static partial class CityDetail
             b.kit = false;
             int nP = b.poly.Count; if (nP < 3 || b.h < 3f) continue;
             if (Vector2.Distance(new Vector2(b.c.x, b.c.z), new Vector2(player.x, player.z)) > KitRadius) continue;
+            if (cutPolys.Any(cp => b.poly.Any(p => NearPoly(cp, p, 2.5f)))) continue;     // next to a landmark lot: its walls were cut, keep it plain
             int style = rnd.Next(100) < 45 ? 0 : rnd.Next(100) < 64 ? 1 : 2;           // 0 Italian, 1 modern, 2 old shuttered
             var mats = new Dictionary<string, Material>
             {
@@ -124,6 +125,8 @@ public static partial class CityDetail
                 bool street = StreetEdge(mid + n * 2f, null, out var near) < 4f && near != null;
                 int bays = Mathf.Max(1, Mathf.RoundToInt(L / TileW)); float bw = L / bays, sx = bw / TileW;
                 int doorAt = street && bays >= 3 ? rnd.Next(bays) : -1;
+                // a piece only where the old wall really stands behind it (cut, collapsed or missing walls get nothing)
+                bool WallAt(Vector3 at, float y) => Ray(at + n * 1.2f + Vector3.up * y, -n, 1.9f, out var wh2) && Vector3.Dot(wh2.normal, n) > 0.6f;
                 for (int j = 0; j < bays; j++)
                 {
                     var o = a + f * (bw * (j + 0.5f)) + n * inset; o.y = 0;
@@ -146,12 +149,13 @@ public static partial class CityDetail
                         if (!pc.StartsWith("dmg") && pc != "door" && R() < (b.ruined ? 0.28f : 0.06f * hit)) pc = "dmg_hole" + rnd.Next(3);
                         else if (pc.StartsWith("win") && R() < (b.ruined ? 0.5f : 0.22f * hit)) pc = "win_broken";
                         var at = o + Vector3.up * (fl * FloorH * sy);
+                        if (!WallAt(o, (fl + 0.5f) * FloorH * sy)) continue;
                         Place(pc, at, n, new Vector3(sx, sy, 1), mats);
                         if (fl > 0 && !pc.StartsWith("dmg")) Place("band", at, n, new Vector3(sx, 1, 1), mats);
                         if (fl == 0 && (pc.StartsWith("win") || pc == "plain")) Place("base", at, n, new Vector3(sx, 1, 1), mats);
                         nBays++;
                     }
-                    if (!topGone) Place("parapet", o + Vector3.up * b.h, n, new Vector3(sx, 1, 1), mats);
+                    if (!topGone && WallAt(o, b.h - 1f)) Place("parapet", o + Vector3.up * b.h, n, new Vector3(sx, 1, 1), mats);
                 }
                 any = true;
             }
@@ -161,6 +165,8 @@ public static partial class CityDetail
             {
                 var p = b.poly[i]; var e = b.poly[(i + 1) % nP] - p; e.y = 0; if (e.sqrMagnitude < 0.01f) continue;
                 var outw = (p - b.c); outw.y = 0;
+                float hy = Mathf.Min(b.h - 1f, 4f);
+                if (!Ray(new Vector3(p.x, hy, p.z) + outw.normalized * 1.5f, -outw.normalized, 2.2f, out _)) continue;   // no wall at this corner
                 Place("corner", new Vector3(p.x, 0, p.z) + outw.normalized * 0.12f, e.normalized, new Vector3(1, (b.h + 1.0f) / FloorH, 1), mats);
             }
             b.kit = true; nB++;

@@ -16,7 +16,7 @@ using UnityEngine.Rendering;
 public static class LookPro
 {
     const string Root = "Assets/Benghazi", PH2 = Root + "/Textures/PolyHaven2k", Gen = Root + "/Textures/Generated", Mats = Root + "/Materials";
-    const string SkyFile = Root + "/Sky/kloofendal_48d_partly_cloudy_puresky_4k.hdr";
+    const string SkyFile = Root + "/Sky/wasteland_clouds_puresky_4k.hdr";          // cloudy sunset (Poly Haven, CC0)
 
     public static void Run()
     {
@@ -116,7 +116,8 @@ public static class LookPro
     static void Surfaces()
     {
         int n = 0;
-        n += Apply("Asphalt", "worn_asphalt", new Color(0.44f, 0.43f, 0.42f));         // dark as the road was, but old: worn, cracked, faded
+        n += Apply("Asphalt", "worn_asphalt", new Color(1.75f, 1.67f, 1.56f));        // the scan is dark (mean 58/255): lifted to the light warm grey of the sun-bleached, dusty road in the reference photo (~105/255) (the owner's reference photo)
+        { var am = AssetDatabase.LoadAssetAtPath<Material>($"{Mats}/Asphalt.mat"); if (am) { am.SetFloat("_Smoothness", 0.25f); am.SetFloat("_BumpScale", 0.6f); EditorUtility.SetDirty(am); } }   // matte: old asphalt does not shine
         n += Apply("Promenade", "precast_stone_paving", new Color(1.05f, 1.02f, 0.97f));
         n += Apply("SeaWall", "painted_plaster_wall", new Color(1.08f, 1.06f, 1.02f));
         n += Apply("Sand", "coast_sand_02", new Color(1.02f, 0.96f, 0.86f));
