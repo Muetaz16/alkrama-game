@@ -414,6 +414,7 @@ public static class LookUpgrade
             var ti = (TextureImporter)AssetImporter.GetAtPath(path);
             ti.textureType = normal ? TextureImporterType.NormalMap : TextureImporterType.Default;
             ti.sRGBTexture = false; ti.alphaIsTransparency = false; ti.wrapMode = TextureWrapMode.Repeat; ti.mipmapEnabled = true; ti.anisoLevel = 4;
+            ti.isReadable = !normal;         // the game reads the glass mask to know a window from a wall (CarDamage.BuildingGlassAt)
             ti.SaveAndReimport();
             return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
         }

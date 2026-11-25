@@ -29,7 +29,7 @@ public static partial class CityDetail
         cutPolys.Clear();
         foreach (var mf in city.GetComponentsInChildren<MeshFilter>(true))
         {
-            if (!mf.sharedMesh || !mf.sharedMesh.name.EndsWith("_cut")) continue;
+            if (mf.sharedMesh && !mf.sharedMesh.name.EndsWith("_cut")) continue;   // a cut copy, or a lost one (CityCut.asset was remade)
             var src = PrefabUtility.GetCorrespondingObjectFromSource(mf);
             if (!src || !src.sharedMesh) continue;
             mf.sharedMesh = src.sharedMesh;
@@ -140,6 +140,7 @@ public static partial class CityDetail
             }
         }
 
+        Debug.Log($"[hero] {spots.Count} street fronts >= 12 m near the play area: " + string.Join(" ", spots.Select(x => x.L.ToString("F0"))));
         int placed = 0; var taken = new List<Vector3>();
         foreach (var (file, width, copies) in Heroes)
         {
@@ -165,7 +166,6 @@ public static partial class CityDetail
                     if (bb.max.y < 1.5f || bb.size.x > 60f || bb.size.z > 60f || !Inside(best.b.poly, bb.center)) continue;
                     r.enabled = false; if (r.TryGetComponent<Collider>(out var c)) c.enabled = false; r.gameObject.name = HiddenTag; off++;
                 }
-                if (off == 0) { spots.Remove(best); k--; continue; }        // nothing there to replace: it would stand inside another building
                 var go = (GameObject)PrefabUtility.InstantiatePrefab(asset);
                 go.name = $"Landmark {file} {k + 1}";
                 var wallLine = best.mid + best.n * best.inset; wallLine.y = -0.05f;

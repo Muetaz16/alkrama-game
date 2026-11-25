@@ -127,6 +127,7 @@ public class ViewModel : MonoBehaviour
     // reload timeline (fractions of the whole reload); the sounds in Update() use the same numbers
     const float RHandOff = 0.02f, RAtPouch = 0.13f, RMagOut = 0.15f, RBehind = 0.32f, RStrip = 0.38f, RLug = 0.45f, RSeated = 0.52f,
         RUnder = 0.6f, ROnHandle = 0.67f, RPull = 0.69f, RBack = 0.755f, RHome = 0.78f, RHandBack = 0.8f, RUnderBack = 0.88f;
+    public float BoltBack(int w) => bolt[w] ? (boltHome[w] - bolt[w].localPosition).z : 0;          // how far the charging handle is drawn, metres
     public string HandleDebug() { int w = Shown; return bolt[w] ? $"charging handle in gun space {model[w].InverseTransformPoint(bolt[w].TransformPoint(handleAt[w])):F3}, grip {gripR[w]:F3}" : "no bolt"; }
     public string ReloadDebug()
     {
@@ -220,6 +221,16 @@ public class ViewModel : MonoBehaviour
         {
             if (u < 0.72f) { lhA = lhB = 3; lhK = 0; }
             else { lhA = 1; lhB = 0; lhK = Sm(u, 0.72f, 0.86f); }
+        }
+        else if (side < 0)
+        {
+            // Rifle in the left shoulder: the working hand is the right one and the charging handle is on its
+            // own side of the rifle. No going underneath - the hand that seated the magazine goes straight up
+            // to the handle, racks it and returns to the handguard. An AK does not hold its bolt open on an
+            // empty magazine, so it will not fire until this is done.
+            if (u < ROnHandle) { lhA = 2; lhB = 4; lhK = Sm(u, RSeated, ROnHandle - 0.03f); }
+            else if (u < RHandBack) { lhA = lhB = 4; lhK = 0; }
+            else { lhA = 4; lhB = 0; lhK = Sm(u, RHandBack, 0.95f); }
         }
         else
         {
@@ -403,9 +414,11 @@ public class ViewModel : MonoBehaviour
         float ph = player.StepPhase, bobK = k * Mathf.Lerp(1f, 0.18f, a) * (1 + sp * 1.4f);
         pos += new Vector3(Mathf.Sin(ph) * 0.008f, Mathf.Sin(ph * 2) * 0.0055f - 0.004f * k, -0.006f * k) * bobK;
         rot += new Vector3(Mathf.Sin(ph * 2) * 0.7f, Mathf.Sin(ph) * 0.55f, Mathf.Sin(ph) * 1.2f) * bobK;
-        // sprint: rifle swung across the chest, knife pumped low
+        // Sprint across open ground: the rifle is carried by the firing hand alone, muzzle up, the stock
+        // against the side of the face with its heel on the shoulder; the other hand is off the rifle, down
+        // by the body where the spare magazines are, pumping with the stride. (Knife: pumped low.)
         if (w == Knife) { pos += new Vector3(-0.01f, -0.03f, -0.02f) * sp; rot += new Vector3(22, 0, 8) * sp; }
-        else { pos += new Vector3(-0.05f, 0.01f, -0.06f) * sp; rot += new Vector3(12, -38, 24) * sp; rot += new Vector3(Mathf.Sin(ph * 2) * 3f, 0, Mathf.Sin(ph) * 4f) * sp; }
+        else { pos += new Vector3(0.15f, -0.075f, -0.1f) * sp; rot += new Vector3(-54f, 7f, 12f) * sp; rot += new Vector3(Mathf.Sin(ph * 2) * 2.5f, 0, Mathf.Sin(ph) * 3f) * sp; }
 
         // ready posture: low ready when nothing is happening (muzzle just under the line of sight), straight
         // up to the shoulder the moment there is a threat, a shot or the aim button
@@ -646,6 +659,14 @@ public class ViewModel : MonoBehaviour
             g.wrist = hd - fingers.normalized * 0.08f + gm.right * 0.03f + f * 0.012f; g.rot = Basis(fingers, f * s);
             g.i = 0.75f; g.m = 0.75f; g.r = 0.6f; g.l = 0.55f; g.t = 0.25f;
         }
+        else if (kind == 6)
+        {
+            // sprinting: off the rifle, down beside the body at the spare magazines, swinging with the stride
+            float sw = Mathf.Sin(player.StepPhase);
+            g.wrist = ct.TransformPoint(Pouch(s) + new Vector3(-0.05f * s, 0.03f, 0.05f)) + ct.forward * sw * 0.08f + ct.up * Mathf.Abs(sw) * 0.02f;
+            g.rot = Basis(ct.forward * 0.8f - ct.up * 0.55f + ct.right * 0.1f * s, ct.up * 0.9f + ct.forward * 0.4f);
+            g.i = g.m = g.r = g.l = 0.55f; g.t = 0.3f;
+        }
         else if (kind == 5)
         {
             // on the way under the rifle: below the magazine, hand open, turning palm-up
@@ -723,7 +744,8 @@ public class ViewModel : MonoBehaviour
         }
         // which hand does what: k = 1 the right hand fires, 0 the left one does (support-side shoulder)
         bool reloading = Playing(reloadAnim) && reloadAnim.weapon == w;
-        Grip Sup(float s) => reloading ? Grip.Mix(Support(w, s, lhA), Support(w, s, lhB), lhK) : Support(w, s, 0);
+        float free = Mathf.SmoothStep(0, 1, sprintT);
+        Grip Sup(float s) => reloading ? Grip.Mix(Support(w, s, lhA), Support(w, s, lhB), lhK) : free > 0.001f ? Grip.Mix(Support(w, s, 0), Support(w, s, 6), free) : Support(w, s, 0);
         Place(0, k > 0.999f ? Firing(w, 1) : k < 0.001f ? Sup(-1) : Grip.Mix(Sup(-1), Firing(w, 1), k));
         Place(1, k > 0.999f ? Sup(1) : k < 0.001f ? Firing(w, -1) : Grip.Mix(Firing(w, -1), Sup(1), k));
     }

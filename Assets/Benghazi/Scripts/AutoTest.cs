@@ -156,6 +156,7 @@ public class AutoTest : MonoBehaviour
         cam.pitch = -Mathf.Atan2(d.y, new Vector2(d.x, d.z).magnitude) * Mathf.Rad2Deg;
     }
 
+    bool rackShot;
     IEnumerator Shooting()
     {
         var gun = player.GetComponent<WeaponController>();
@@ -249,6 +250,18 @@ public class AutoTest : MonoBehaviour
         gun.reloadPressed = true; yield return new WaitForSeconds(0.9f);
         yield return Shot("fp_left_reload.png");
         yield return new WaitForSeconds(1.9f);
+        // and with the magazine empty: from the left shoulder the right hand changes the magazine and then
+        // racks the handle itself, straight away - the rifle must not be ready before the bolt has been drawn
+        gun.W.mag = 0; gun.reloadPressed = true;
+        float l0 = Time.time, llen = gun.W.reloadTime * 0.95f, drawn = 0; int roundsAtRack = -1;
+        while (Time.time - l0 < llen * 1.1f)
+        {
+            float u = (Time.time - l0) / llen, bb = gun.View.BoltBack(0);
+            if (bb > drawn) { drawn = bb; roundsAtRack = gun.W.mag; }
+            if (u > ViewModel.ReloadRackAt - 0.03f && u < ViewModel.ReloadRackAt && !rackShot) { rackShot = true; yield return Shot("fp_left_rack.png"); yield return Inspect("inspect_left_rack.png", new Vector3(0.5f, -0.02f, 0.34f), new Vector3(-0.07f, -0.13f, 0.4f)); }
+            yield return null;
+        }
+        log.WriteLine($"left shoulder, empty reload: charging handle drawn {drawn * 1000:F0} mm by the working (right) hand, magazine read {roundsAtRack} at that moment, {gun.W.mag} after; shoulder side {gun.View.ShoulderSide:F2}");
         gun.supportShoulder = false; yield return new WaitForSeconds(0.6f);
         // kneeling and prone
         player.crouch = true; yield return new WaitForSeconds(0.7f);
@@ -262,6 +275,18 @@ public class AutoTest : MonoBehaviour
         int hitsP = gun.hits; gun.fireHeld = true; yield return new WaitForSeconds(0.3f); gun.fireHeld = false; gun.aimHeld = false;
         log.WriteLine($"prone burst: {gun.hits - hitsP} hits, eye {Camera.main.transform.position.y - player.transform.position.y:F2} m above the ground");
         player.prone = false; yield return new WaitForSeconds(1.0f);
+        // sprint across open ground: rifle up in the firing hand, the other hand off it
+        var keepPos = player.transform.position; cam.yaw = startYaw + 180f; cam.pitch = 4f;
+        player.moveInput = Vector2.up; player.sprint = true;
+        yield return new WaitForSeconds(1.3f);
+        yield return Shot("fp_sprint_carry.png");
+        yield return Inspect("inspect_sprint_carry.png", new Vector3(0.55f, 0.05f, 0.5f), new Vector3(0.04f, -0.12f, 0.2f));
+        log.WriteLine($"sprint carry: speed {player.Speed:F1} m/s, sprinting {player.Sprinting}");
+        player.moveInput = Vector2.zero; player.sprint = false;
+        yield return new WaitForSeconds(0.5f);
+        var ccS = player.GetComponent<CharacterController>(); ccS.enabled = false; player.transform.position = keepPos; ccS.enabled = true;
+        LookAt(near.transform.position + Vector3.up * 0.55f);
+        yield return new WaitForSeconds(0.4f);
         // low ready after a quiet moment
         yield return new WaitForSeconds(3.2f);
         yield return Shot("fp_low_ready.png");
@@ -325,6 +350,140 @@ public class AutoTest : MonoBehaviour
         log.WriteLine($"knife: {landed} of 5 attacks landed at 0.9 m");
         gun.switchTo = 0;
         yield return new WaitForSeconds(0.6f);
+        log.Flush();
+    }
+
+    // a parked car that is not burnt out: rounds into a door must leave holes on the bodywork, rounds into
+    // a window must break the glass
+    IEnumerator Cars()
+    {
+        var gun = player.GetComponent<WeaponController>(); var cc = player.GetComponent<CharacterController>();
+        Transform holder = null; foreach (var t in FindObjectsByType<Transform>(FindObjectsSortMode.None)) if (t.name == "Cars" && t.childCount > 0) { holder = t; break; }
+        if (!holder || !gun) { log.WriteLine("cars: none in the scene"); yield break; }
+        Collider best = null; Vector3 stand = Vector3.zero; float bd = 1e9f;
+        foreach (Transform car in holder)
+        {
+            if (car.name.Contains("burnt")) continue;
+            var body = car.Find("Body collider"); var col = body ? body.GetComponent<Collider>() : null; if (!col) continue;
+            foreach (float side in new[] { 1f, -1f })
+            {
+                var from = col.bounds.center + car.right * side * 5.5f;
+                if (!Physics.Raycast(from + Vector3.up * 20, Vector3.down, out var g, 30f) || g.point.y < -0.1f || g.point.y > 0.6f) continue;
+                if (Physics.Linecast(g.point + Vector3.up * 1.5f, col.bounds.center, out var blk) && blk.collider != col) continue;      // something in the way
+                float d = Vector3.Distance(g.point, player.transform.position);
+                if (d < bd) { bd = d; best = col; stand = g.point; }
+            }
+        }
+        if (!best) { log.WriteLine($"cars: {holder.childCount} cars, none with a body collider and a clear side to stand at"); yield break; }
+        cc.enabled = false; player.transform.position = stand + Vector3.up * 0.1f; cc.enabled = true;
+        player.moveInput = Vector2.zero; gun.switchTo = 0; gun.Get(0).mag = gun.Get(0).magSize;       // a full magazine for the two bursts
+        var b = best.bounds; Vector3 door = new(b.center.x, b.min.y + b.size.y * 0.42f, b.center.z), pane = new(b.center.x, b.min.y + b.size.y * 0.8f, b.center.z);
+        yield return new WaitForSeconds(0.6f);
+        gun.aimHeld = true; LookAt(door); yield return new WaitForSeconds(0.6f); LookAt(door); yield return null;
+        int h0 = CarDamage.BodyHoles, g0 = CarDamage.GlassHits;
+        gun.fireHeld = true; yield return new WaitForSeconds(0.32f); gun.fireHeld = false; gun.aimHeld = false;
+        yield return new WaitForSeconds(0.5f);
+        yield return Shot("car_holes.png");
+        log.WriteLine($"car body ({best.transform.parent.name}): {CarDamage.BodyHoles - h0} holes, {CarDamage.GlassHits - g0} glass hits from rounds aimed at the door");
+        gun.aimHeld = true; LookAt(pane); yield return new WaitForSeconds(0.6f); LookAt(pane); yield return null;
+        h0 = CarDamage.BodyHoles; g0 = CarDamage.GlassHits;
+        gun.fireHeld = true; yield return new WaitForSeconds(0.12f);
+        yield return Shot("car_glass_breaking.png");
+        yield return new WaitForSeconds(0.2f); gun.fireHeld = false; gun.aimHeld = false;
+        yield return new WaitForSeconds(0.6f);
+        yield return Shot("car_glass.png");
+        log.WriteLine($"car glass: {CarDamage.GlassHits - g0} hits on glass, {CarDamage.PanesBroken} pane(s) broken out, {CarDamage.BodyHoles - h0} holes from rounds aimed at the window");
+        // a tyre: the car must drop on that corner
+        var bt = best.transform; var lb = ((MeshCollider)best).sharedMesh.bounds; var pl = bt.InverseTransformPoint(player.transform.position);
+        float sx = pl.x > lb.center.x ? 1 : -1;
+        var wheel = bt.TransformPoint(new Vector3(lb.center.x + sx * lb.size.x * 0.47f, lb.min.y + lb.size.y * 0.17f, lb.center.z + lb.size.z * 0.5f * 0.62f));
+        var carRoot = bt.parent; var rot0 = carRoot.rotation; int t0 = CarDamage.TyresBurst;
+        gun.aimHeld = true; LookAt(wheel); yield return new WaitForSeconds(0.6f); LookAt(wheel); yield return null;
+        gun.fireHeld = true; yield return new WaitForSeconds(0.3f); gun.fireHeld = false; gun.aimHeld = false;
+        yield return new WaitForSeconds(0.9f);
+        yield return Shot("car_tyre.png");
+        log.WriteLine($"car tyre: {CarDamage.TyresBurst - t0} tyre(s) burst, the car tilted {Quaternion.Angle(rot0, carRoot.rotation):F1} degrees");
+        // and from close up
+        var closer = stand + Vector3.ProjectOnPlane(b.center - stand, Vector3.up).normalized * 3.1f;
+        cc.enabled = false; player.transform.position = closer + Vector3.up * 0.1f; cc.enabled = true;
+        yield return new WaitForSeconds(0.4f);
+        LookAt(Vector3.Lerp(door, pane, 0.55f)); yield return new WaitForSeconds(0.5f);
+        yield return Shot("car_damage_close.png");
+        // an enemy on the far side of the car fires at the player through it: his rounds must mark it too
+        var spawner = FindFirstObjectByType<EnemySpawner>(); var hp = player.GetComponent<PlayerHealth>();
+        if (spawner && hp)
+        {
+            hp.invulnerable = true;
+            foreach (var o in EnemyAI.All.ToArray()) if (o) Destroy(o.gameObject);
+            yield return null;
+            var far = b.center + Vector3.ProjectOnPlane(b.center - stand, Vector3.up).normalized * 7f;
+            if (Physics.Raycast(far + Vector3.up * 20, Vector3.down, out var fg, 30f)) far = fg.point;
+            cc.enabled = false; player.transform.position = stand + Vector3.up * 0.1f; cc.enabled = true;
+            player.crouch = true;                              // down behind the car, so his rounds meet the car first
+            var foe = Instantiate(spawner.enemyPrefab, far + Vector3.up * 0.05f, Quaternion.LookRotation(Vector3.ProjectOnPlane(stand - far, Vector3.up))).GetComponent<EnemyAI>();
+            yield return null;
+            foe.Alert(player.transform.position);
+            int eh = CarDamage.BodyHoles, eg = CarDamage.GlassHits, ep = CarDamage.PanesBroken, es = EnemyAI.ShotsFired;
+            yield return new WaitForSeconds(7f);
+            log.WriteLine($"enemy fire on the car: {EnemyAI.ShotsFired - es} rounds fired, {CarDamage.BodyHoles - eh} holes in the body, {CarDamage.GlassHits - eg} hits on glass, {CarDamage.PanesBroken - ep} pane(s) broken out");
+            player.crouch = false; if (foe) Destroy(foe.gameObject);
+            cc.enabled = false; player.transform.position = closer + Vector3.up * 0.1f; cc.enabled = true;
+            yield return new WaitForSeconds(0.4f);
+            LookAt(Vector3.Lerp(door, pane, 0.55f)); yield return new WaitForSeconds(0.5f);
+            yield return Shot("car_after_enemy_fire.png");
+        }
+        log.Flush();
+    }
+
+    // a window of a building: found by looking round for a point the glass mask calls glass, then shot
+    IEnumerator BuildingGlass()
+    {
+        var gun = player.GetComponent<WeaponController>(); if (!gun) yield break;
+        var eye = player.transform.position + Vector3.up * 1.62f; bool found = false; Vector3 at = Vector3.zero; int probes = 0, walls = 0; string why = "";
+        for (float pitch = 2; pitch <= 26 && !found; pitch += 3)
+            for (float yaw = 0; yaw < 360 && !found; yaw += 4)
+            {
+                var d = Quaternion.Euler(-pitch, yaw, 0) * Vector3.forward;
+                if (!Physics.Raycast(eye, d, out var h, 70f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore) || h.distance < 8f) continue;
+                probes++;
+                if (CarDamage.BuildingGlassAt(h)) { found = true; at = h.point; }
+                else { if (CarDamage.LastBuildingProbe == "wall") walls++; else if (CarDamage.LastBuildingProbe != "not a facade" && CarDamage.LastBuildingProbe != "not a mesh collider" && CarDamage.LastBuildingProbe != "no renderer") why = CarDamage.LastBuildingProbe; }
+            }
+        if (!found) { log.WriteLine($"building glass: none found in {probes} looks ({walls} facade walls){(why != "" ? ", " + why : "")}"); yield break; }
+        gun.switchTo = 0; gun.Get(0).mag = gun.Get(0).magSize;
+        int g0 = CarDamage.BuildingGlassHits, p0 = CarDamage.PanesBroken;
+        gun.aimHeld = true; LookAt(at); yield return new WaitForSeconds(0.7f); LookAt(at); yield return null;
+        gun.fireHeld = true; yield return new WaitForSeconds(0.14f);
+        yield return Shot("building_glass_breaking.png");
+        yield return new WaitForSeconds(0.45f); gun.fireHeld = false;
+        yield return new WaitForSeconds(0.7f);
+        yield return Shot("building_glass.png");
+        gun.aimHeld = false;
+        log.WriteLine($"building glass at {Vector3.Distance(eye, at):F0} m: {CarDamage.BuildingGlassHits - g0} hits on window glass, {CarDamage.PanesBroken - p0} pane(s) broken out");
+        log.Flush();
+    }
+
+    // being hit, badly hurt, and dying: what the player sees
+    IEnumerator Wounds()
+    {
+        var hp = player.GetComponent<PlayerHealth>(); if (!hp) yield break;
+        hp.invulnerable = false; int h0 = HitFeedback.PlayerHits;
+        var from = player.transform.position + player.transform.forward * 10f + player.transform.right * 6f;
+        hp.Damage(22f, from); yield return new WaitForSeconds(0.25f);
+        yield return Shot("hurt_hit.png");
+        hp.Damage(22f, from); yield return new WaitForSeconds(0.2f); hp.Damage(26f, from);
+        yield return new WaitForSeconds(0.9f);
+        yield return Shot("hurt_low_health.png");
+        log.WriteLine($"player hit: {HitFeedback.PlayerHits - h0} hits felt, health {hp.Health:F0}");
+        hp.Damage(200f, from);
+        yield return new WaitForSeconds(0.7f);
+        yield return Shot("death_falling.png");
+        log.WriteLine($"player death: dead {hp.Dead}, view {HitFeedback.DeathView:F2} of the way down, eye {Camera.main.transform.position.y - player.transform.position.y:F2} m above the ground, roll {Camera.main.transform.eulerAngles.z:F0} deg");
+        yield return new WaitForSeconds(1.6f);
+        yield return Shot("death_fade.png");
+        yield return new WaitForSeconds(2.6f);
+        log.WriteLine($"player respawned: dead {hp.Dead}, health {hp.Health:F0}, view back up {HitFeedback.DeathView:F2}");
+        hp.invulnerable = true;
         log.Flush();
     }
 
@@ -460,6 +619,7 @@ public class AutoTest : MonoBehaviour
         yield return new WaitForSeconds(1.0f);
         yield return Shot("enemy_down.png");
         log.WriteLine($"enemy dead {e.IsDead}; kills {kills} -> {hp.Kills}, best {hp.Best}");
+        log.WriteLine($"enemy hit feedback: {HitFeedback.EnemyGrunts} grunts, {HitFeedback.BloodMarks} blood marks so far");
         // his rifle is on the ground now: walk over and take what was left in it
         yield return new WaitForSeconds(1.2f);
         var drops = WeaponPickups.Drops; var keep = player.transform.position;
@@ -473,7 +633,9 @@ public class AutoTest : MonoBehaviour
             yield return new WaitForSeconds(0.4f);
             yield return Shot("pickup_prompt.png");
             int before0 = gun.Get(0).reserve; int got = WeaponPickups.TakeNearest();
-            log.WriteLine($"pickup: rifle on the ground {d0.gun.position.y:F2} m up, {d0.spareMags} mags + {d0.magRounds} rounds in it; took {got}, reserve {before0} -> {gun.Get(0).reserve}, rifles left {drops.Count}");
+            int sniperBefore = gun.Get(1).reserve;
+            log.WriteLine($"pickup: rifle on the ground {d0.gun.position.y:F2} m up, {d0.spareMags} mags + {d0.magRounds} rounds of {d0.calibre} in it; took {got}, reserve {before0} -> {gun.Get(0).reserve}, rifles left {drops.Count}");
+            log.WriteLine($"pickup ammunition: {d0.calibre} went to weapon {WeaponPickups.LastWeapon} ({gun.Get(Mathf.Max(0, WeaponPickups.LastWeapon)).name}); sniper reserve unchanged {gun.Get(1).reserve == sniperBefore}; a 5.45x39 rifle would feed weapon {WeaponPickups.WeaponFor("5.45x39")} (-1 = none)");
             yield return new WaitForSeconds(0.3f);
             yield return Shot("pickup_taken.png");
             cc0.enabled = false; player.transform.position = keep; cc0.enabled = true;
@@ -721,7 +883,10 @@ public class AutoTest : MonoBehaviour
         // third person once, to show the soldier with the new rifle
         var wc = player.GetComponent<WeaponController>();
         if (wc) { wc.SetView(false); yield return new WaitForSeconds(0.5f); yield return Shot("tp_view.png"); wc.SetView(true); yield return new WaitForSeconds(0.3f); }
+        yield return Cars();
+        yield return BuildingGlass();
         yield return Showcase();
+        yield return Wounds();
         yield return Drown();
         log.WriteLine("done"); log.Close();
         Application.Quit();

@@ -71,6 +71,7 @@ public static partial class CityDetail
         RealCars.Spawn(root.transform);
         foreach (var h in heroPlaced) if (h) h.transform.SetParent(root.transform, true);
         AtmosphereObject(root.transform);
+        CarColliders.Apply();           // the cars' real shape for bullets (holes on the bodywork, glass that breaks)
         foreach (var kv in carMarks)
         {
             var mk = new GameObject("CarMarker" + kv.Key).transform; mk.SetParent(root.transform, false);
