@@ -202,6 +202,8 @@ model has loaded before exporting (it loads async; exporting early leaves it out
 
 ## 7. Assets and credits (keep these)
 
+- **(HDRP) NYC-like City Buildings Set (PBR)** by Marcin's Assets (Unity Asset Store, free, Standard Unity Asset Store EULA) in `Assets/ThirdParty/NYCBuildings` - only models, materials and textures; materials converted to URP by `NycSetup.Run`; used as the outskirts skyline (`CityDetail.Skyline.cs`), brick re-dressed as plaster. The package itself must not be redistributed outside the game.
+
 - Map data © **OpenStreetMap contributors** (ODbL) — credit must stay visible.
 - Soldier + animations: Mixamo (Ch15 + Pro Rifle Pack).
 - Guns (CC0, OpenGameArt): AK-47 by Lamoot, VSS "Soviet Special Sniper Rifle 3D", KA-BAR knife by gamekorp —

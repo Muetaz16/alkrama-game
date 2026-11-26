@@ -17,3 +17,11 @@ WeaponReference/**/originals/
 WeaponReference/**/normalized/
 WeaponReference/_cache/
 WeaponReference/_tools/__pycache__/
+
+# a stray Unity starter project created by mistake inside this folder - not part of the game
+/My project/
+
+# Asset Store pack (Standard Unity Asset Store EULA: no redistribution in a public repo). Get it free from the Asset Store,
+# extract Models/, Materials/ and Prefabs/Parts/ into this folder, run NycSetup.Run (see README section 7)
+/Assets/ThirdParty/
+/Assets/ThirdParty.meta
