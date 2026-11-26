@@ -160,7 +160,7 @@ public static class LookPro
     }
 
     // roughness -> URP's metallic/smoothness map (smoothness in alpha)
-    static Texture2D Gloss(string id)
+    public static Texture2D Gloss(string id)
     {
         var outPath = $"{Gen}/{id}_gloss.png";
         if (!File.Exists(outPath))

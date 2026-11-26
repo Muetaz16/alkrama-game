@@ -12,7 +12,7 @@ using UnityEngine;
 public static partial class CityDetail
 {
     const string KitPath = Root + "/Models/Kit/sabri_kit.glb";
-    public const float KitRadius = 240f;                 // buildings this close to the player's start get the kit
+    public const float KitRadius = 320f;                 // buildings this close to the player's start get the kit
     public const int KitLayer = 22;
     static readonly HashSet<string> KitMats = new();
 
@@ -79,21 +79,22 @@ public static partial class CityDetail
         kitTris = 0; KitMats.Clear();
         Material K(Material m) { KitMats.Add(m.name); return m; }
         // ochre, tan and sand plaster like the streets of Sabri, about half of it peeling (damaged_plaster)
-        var ochres = new[] { new Color(0.82f, 0.64f, 0.42f), new Color(0.76f, 0.6f, 0.42f), new Color(0.86f, 0.72f, 0.52f), new Color(0.72f, 0.58f, 0.44f), new Color(0.8f, 0.68f, 0.54f), new Color(0.88f, 0.8f, 0.68f) };
+        var ochres = new[] { new Color(0.86f, 0.74f, 0.58f), new Color(0.8f, 0.71f, 0.6f), new Color(0.9f, 0.8f, 0.66f), new Color(0.76f, 0.68f, 0.58f), new Color(0.84f, 0.76f, 0.66f), new Color(0.9f, 0.86f, 0.78f) };
         var plasters = ochres.Select((c, i) => K(Mat2("KitPlaster" + i, i % 2 == 0 ? "damaged_plaster" : "painted_plaster_wall", c, 0.06f))).ToArray();
         var ruinedPlaster = K(Mat2("KitPlasterRuined", "damaged_plaster", new Color(0.78f, 0.62f, 0.44f), 0.05f));
         var shutters = new[] { new Color(0.24f, 0.38f, 0.28f), new Color(0.36f, 0.25f, 0.17f), new Color(0.24f, 0.32f, 0.42f), new Color(0.45f, 0.45f, 0.42f) }
-            .Select((c, i) => K(Mat("KitShutter" + i, tex: "NoiseGrey", c: c, smooth: 0.25f))).ToArray();
-        var trim = K(Mat("KitTrim", ph: "concrete_wall_008", c: new Color(0.8f, 0.7f, 0.56f), smooth: 0.06f, tile: 1f));
-        var glass = K(Mat("KitGlass", c: new Color(0.06f, 0.07f, 0.08f), smooth: 0.88f, metal: 0.2f));
-        var frame = K(Mat("KitFrame", c: new Color(0.74f, 0.74f, 0.72f), smooth: 0.45f, metal: 0.3f));
+            .Select((c, i) => K(Mat2("KitShutter" + i, "painted_plaster_wall", c * 1.25f, 0.04f, 2f))).ToArray();
+        var trim = K(Mat2("KitTrim", "concrete_floor_worn_001", new Color(0.92f, 0.85f, 0.74f), 0.05f, 1f));
+        var glass = K(Mat("KitGlass", c: new Color(0.09f, 0.095f, 0.1f), smooth: 0.72f, metal: 0.1f));   // dusty glass
+        var frame = K(Mat2("KitFrame", "concrete_floor_worn_001", new Color(0.8f, 0.79f, 0.76f), 0.06f, 3f));
         var metal = K(Mat("KitMetal", tex: "Rust", c: new Color(0.45f, 0.42f, 0.4f), smooth: 0.3f, metal: 0.6f));
         var dark = K(Mat("KitDark", c: new Color(0.015f, 0.014f, 0.013f), smooth: 0f));
         var block = K(Mat2("KitBlock", "broken_wall", new Color(0.85f, 0.8f, 0.74f), 0.05f, 1.5f));
+        var streak = Mat("RainStreak", tex: "Streak", c: Color.white, smooth: 0.05f, transparent: true); KitMats.Add(streak.name); NoShadow.Add(streak.name);
         var shopShutter = K(Mat("KitShopShutter", tex: "Shutter", c: Color.white, smooth: 0.35f, metal: 0.5f));
         var door = K(Mat("KitDoor", tex: "Rust", c: new Color(0.75f, 0.6f, 0.5f), smooth: 0.3f, metal: 0.4f));
         var rebar = K(Mat("Rebar", tex: "Rust", c: new Color(0.7f, 0.6f, 0.55f), smooth: 0.2f, metal: 0.7f));
-        var stone = K(Mat("KitStone", ph: "concrete_wall_008", c: new Color(0.58f, 0.55f, 0.5f), smooth: 0.06f));
+        var stone = K(Mat2("KitStone", "precast_stone_paving", new Color(0.72f, 0.68f, 0.62f), 0.05f, 1f));
         var signs = new[] { new Color(0.62f, 0.14f, 0.1f), new Color(0.1f, 0.38f, 0.22f), new Color(0.12f, 0.24f, 0.5f), new Color(0.82f, 0.62f, 0.15f), new Color(0.85f, 0.84f, 0.8f) }
             .Select((c, i) => K(Mat("Sign" + i, tex: "Sign", c: c, smooth: 0.4f))).ToArray();
 
@@ -103,7 +104,7 @@ public static partial class CityDetail
             b.kit = false;
             int nP = b.poly.Count; if (nP < 3 || b.h < 3f) continue;
             if (Vector2.Distance(new Vector2(b.c.x, b.c.z), new Vector2(player.x, player.z)) > KitRadius) continue;
-            if (cutPolys.Any(cp => b.poly.Any(p => NearPoly(cp, p, 2.5f)))) continue;     // next to a landmark lot: its walls were cut, keep it plain
+            if (heroPlaced.Count > 0 && cutPolys.Any(cp => b.poly.Any(p => NearPoly(cp, p, 2.5f)))) continue;     // next to a landmark lot: its walls were cut, keep it plain
             int style = rnd.Next(100) < 45 ? 0 : rnd.Next(100) < 64 ? 1 : 2;           // 0 Italian, 1 modern, 2 old shuttered
             var mats = new Dictionary<string, Material>
             {
@@ -128,7 +129,7 @@ public static partial class CityDetail
                 int doorAt = street && bays >= 3 ? rnd.Next(bays) : -1;
                 // a piece only where the old wall really stands behind it (cut, collapsed or missing walls get nothing)
                 bool WallAt(Vector3 at, float y) => Ray(at + n * 1.2f + Vector3.up * y, -n, 1.9f, out var wh2) && Vector3.Dot(wh2.normal, n) > 0.6f
-                    && cityRoot && wh2.collider.transform.IsChildOf(cityRoot) && Mathf.Abs(Vector3.Dot(wh2.point - at, n)) < 0.35f;
+                    && cityRoot && wh2.collider.transform.IsChildOf(cityRoot) && Mathf.Abs(Vector3.Dot(wh2.point - at, n)) < 0.9f;
                 for (int j = 0; j < bays; j++)
                 {
                     var o = a + f * (bw * (j + 0.5f)) + n * inset; o.y = 0;
@@ -153,11 +154,20 @@ public static partial class CityDetail
                         var at = o + Vector3.up * (fl * FloorH * sy);
                         if (!WallAt(o, (fl + 0.5f) * FloorH * sy)) continue;
                         Place(pc, at, n, new Vector3(sx, sy, 1), mats);
+                        var face = Quaternion.LookRotation(-n);
+                        if (pc.StartsWith("win") && R() < 0.75f)
+                            Vertical(at + Vector3.up * (0.95f * sy - R(0.7f, 1.1f) / 2) + n * 0.236f, R(1.0f, 1.6f) * sx, R(0.7f, 1.1f), face, streak);
+                        else if (pc.StartsWith("balcony") && R() < 0.6f)
+                            Vertical(at + Vector3.up * (-0.45f - 0.6f) + n * 0.236f, 3f * sx, 1.2f, face, streak);
                         if (fl > 0 && !pc.StartsWith("dmg")) Place("band", at, n, new Vector3(sx, 1, 1), mats);
                         if (fl == 0 && (pc.StartsWith("win") || pc == "plain")) Place("base", at, n, new Vector3(sx, 1, 1), mats);
                         nBays++;
                     }
-                    if (!topGone && WallAt(o, b.h - 1f)) Place("parapet", o + Vector3.up * b.h, n, new Vector3(sx, 1, 1), mats);
+                    if (!topGone && WallAt(o, b.h - 1f))
+                    {
+                        Place("parapet", o + Vector3.up * b.h, n, new Vector3(sx, 1, 1), mats);
+                        if (R() < 0.7f) Vertical(o + Vector3.up * (b.h - 0.3f - 1.1f) + n * 0.236f, bw * R(0.6f, 1f), 2.2f, Quaternion.LookRotation(-n), streak);   // run-off from the roof
+                    }
                 }
                 any = true;
             }

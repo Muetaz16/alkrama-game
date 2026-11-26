@@ -235,7 +235,7 @@ public static partial class CityDetail
         var mSand = Mat("SandDrift", tex: "Sand", c: Color.white, smooth: 0.05f, transparent: true);
         var mHole = Mat("Manhole", tex: "Manhole", c: Color.white, smooth: 0.45f, cutout: 0.4f, metal: 0.5f);
         var mScorch = Mat("Crater", tex: "Crater", c: Color.white, smooth: 0.05f, transparent: true);
-        var mRubble = Mat("RubbleChunk", ph: "concrete_wall_008", c: new Color(0.78f, 0.73f, 0.64f), smooth: 0.08f);
+        var mRubble = Mat("RubbleChunk", ph: "concrete_wall_008", c: new Color(0.56f, 0.53f, 0.49f), smooth: 0.04f);
         int kerbs = 0, walks = 0, marks = 0, decals = 0;
         foreach (var r in roads)
         {
@@ -653,7 +653,7 @@ public static partial class CityDetail
             .Select((c, i) => Mat("Sign" + i, tex: "Sign", c: c, smooth: 0.4f)).ToArray();
         var mPlaster = Mat("RoofRoom", ph: "plastered_wall_02", c: new Color(0.82f, 0.76f, 0.66f), smooth: 0.1f);
         var mDoor = Mat("MetalDoor", tex: "Rust", c: new Color(0.55f, 0.6f, 0.55f), smooth: 0.3f, metal: 0.5f);
-        var mConc = Mat("RubbleChunk", ph: "concrete_wall_008", c: new Color(0.78f, 0.73f, 0.64f), smooth: 0.08f);
+        var mConc = Mat("RubbleChunk", ph: "concrete_wall_008", c: new Color(0.56f, 0.53f, 0.49f), smooth: 0.04f);
         var mRebar = Mat("Rebar", tex: "Rust", c: new Color(0.7f, 0.6f, 0.55f), smooth: 0.2f, metal: 0.7f);
         var mDish = Mat("Dish", c: new Color(0.86f, 0.86f, 0.84f), smooth: 0.45f);
         var mGrey = Mat("DishArm", c: new Color(0.3f, 0.3f, 0.31f), smooth: 0.4f, metal: 0.6f);

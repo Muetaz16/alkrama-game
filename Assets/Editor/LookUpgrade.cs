@@ -65,8 +65,11 @@ public static class LookUpgrade
             if (!m || !m.HasProperty("_BaseColor")) continue;
             var mt = System.Text.RegularExpressions.Regex.Match(m.name, @"_v(\d+)");
             int v = mt.Success ? int.Parse(mt.Groups[1].Value) : 0;
-            m.SetColor("_BaseColor", FacadeTints[v % FacadeTints.Length]); EditorUtility.SetDirty(m); n++;
+            m.SetColor("_BaseColor", FacadeTints[v % FacadeTints.Length]); CityDetail.Weather(m, 0.16f); EditorUtility.SetDirty(m); n++;   // facade UV: 4 m per unit
         }
+        // the web city's rubble chunks: dusty grey broken concrete, not pale cartoon stone
+        var rub = AssetDatabase.LoadAssetAtPath<Material>($"{Mats}/Rubble.mat");
+        if (rub) { rub.SetColor("_BaseColor", new Color(0.52f, 0.49f, 0.45f)); rub.SetFloat("_Smoothness", 0.03f); CityDetail.Weather(rub, 0.5f); EditorUtility.SetDirty(rub); }
         AssetDatabase.SaveAssets();
         Debug.Log($"[war] {n} web facade materials retinted to the ochre palette");
     }
@@ -453,7 +456,7 @@ public static class LookUpgrade
                 else if (false && tn == "image_28") dst = Frond("FrondDry", "FrondDry", Color.white);
                 else if (false && tn == "image_29") dst = Frond("FrondBurnt", "FrondBurnt", Color.white);
                 else if (!tex && (Near(c, 0.31f, 0.29f, 0.27f) || Near(c, 0.56f, 0.54f, 0.51f))) dst = Lit("Rock", "rock_boulder_dry", new Color(0.85f, 0.82f, 0.78f), 0.15f, 1.2f);
-                else if (!tex && Near(c, 0.60f, 0.55f, 0.45f)) dst = Lit("Rubble", "concrete_wall_008", new Color(0.86f, 0.8f, 0.68f), 0.08f, 1f);
+                else if (!tex && Near(c, 0.60f, 0.55f, 0.45f)) dst = Lit("Rubble", "concrete_wall_008", new Color(0.52f, 0.49f, 0.45f), 0.03f, 1f);
                 else if (!tex && size.x > 30 && size.y < 3 && Near(c, 0.91f, 0.89f, 0.85f)) { dst = Lit("LighthouseBase", "concrete_wall_008", new Color(0.98f, 0.96f, 0.92f), 0.1f, 0.8f); PlanarUV(r, 0.35f); }
                 if (dst)
                 {

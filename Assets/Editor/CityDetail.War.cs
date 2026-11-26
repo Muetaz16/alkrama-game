@@ -92,8 +92,26 @@ public static partial class CityDetail
         if (d) m.SetTexture("_BaseMap", d);
         if (n) { m.SetTexture("_BumpMap", n); m.EnableKeyword("_NORMALMAP"); }
         m.SetTextureScale("_BaseMap", Vector2.one * tile);
+        // roughness from the scan: dull where it is rough, a faint sheen where it is worn smooth
+        if (System.IO.File.Exists($"{PH2}/{ph2}_rough_2k.jpg"))
+        {
+            m.SetTexture("_MetallicGlossMap", LookPro.Gloss(ph2)); m.EnableKeyword("_METALLICSPECGLOSSMAP");
+            m.SetFloat("_Smoothness", Mathf.Clamp01(smooth * 6f)); m.SetFloat("_SmoothnessTextureChannel", 0); m.SetFloat("_Metallic", 0);
+        }
+        Weather(m);
         EditorUtility.SetDirty(m);
         return m;
+    }
+
+    // weathering: dark patches, sun-bleached patches and rain streaks at building scale (about 25 m before it
+    // repeats), multiplied over the surface (URP Lit detail map, x2: mid grey = no change)
+    static Texture2D weatherTex;
+    public static void Weather(Material m, float tile = 0.08f, float amount = 1f)
+    {
+        if (!weatherTex) weatherTex = AssetDatabase.LoadAssetAtPath<Texture2D>(Gen + "/Weathering.png");
+        if (!weatherTex) return;
+        m.SetTexture("_DetailAlbedoMap", weatherTex); m.SetTextureScale("_DetailAlbedoMap", Vector2.one * tile);
+        m.SetFloat("_DetailAlbedoMapScale", amount); m.EnableKeyword("_DETAIL_MULX2");
     }
     static Material TwoSided(Material m) { m.SetFloat("_Cull", 0); m.doubleSidedGI = true; EditorUtility.SetDirty(m); return m; }
 
@@ -214,6 +232,23 @@ public static partial class CityDetail
             if (r < 24) g = r > 22 ? 0.35f : ((int)r % 4 < 1 || Mathf.Abs(dx) < 1.2f || Mathf.Abs(dy) < 1.2f) ? 0.5f : 0.12f;
             else if (x < 52 && x > 8 && y > 10 && y < 54 && y % 6 < 2) g *= 0.7f;
             return new Color(g, g, g * 0.97f, 1);
+        }, false);
+        // weathering (grey around 0.5): blotches of dirt, bleached patches, vertical rain runs (v is up on walls)
+        Write("Weathering", 512, 512, (x, y) =>
+        {
+            float big = Noise(x, y, 96, 60) * 0.6f + Noise(x, y, 40, 61) * 0.3f + Noise(x, y, 12, 62) * 0.1f;
+            float runs = Mathf.Pow(Noise(x, y / 24, 5, 63), 3f) * (0.6f + 0.4f * Noise(x, y, 64, 64));       // long thin vertical streaks
+            float v = 0.5f + (big - 0.5f) * 0.42f - runs * 0.22f;
+            return new Color(v, v * 0.995f, v * 0.985f, 1);
+        }, false, wrap: true);
+        // a rain streak running down from a sill: dark at the top, fading and spreading downwards
+        Write("Streak", 128, 256, (x, y) =>
+        {
+            float down = 1 - y / 255f;                                                   // 0 at the top
+            float u = (x - 63.5f) / 64f;
+            float cols = Mathf.Pow(Noise(x, 0, 6, 65), 1.5f);
+            float a = Mathf.Clamp01(1 - Mathf.Abs(u) * (1.1f - down * 0.3f)) * Mathf.Pow(1 - down, 1.3f) * (0.35f + 0.65f * cols) * (0.7f + 0.3f * Noise(x, y, 9, 66));
+            return new Color(0.16f, 0.13f, 0.1f, Mathf.Clamp01(a * 0.85f));
         }, false);
         AssetDatabase.Refresh();
         var gi = (TextureImporter)AssetImporter.GetAtPath(Gen + "/Graffiti.png");
@@ -525,7 +560,7 @@ public static partial class CityDetail
         var mGrime = Mat("WallGrime", tex: "Grime", c: Color.white, smooth: 0.05f, transparent: true);
         var mRebar = Mat("Rebar", tex: "Rust", c: new Color(0.7f, 0.6f, 0.55f), smooth: 0.2f, metal: 0.7f);
         var mHeap = Mat("RubbleHeap", tex: "Rubble", c: new Color(0.62f, 0.58f, 0.52f), smooth: 0.05f, tile: 1f);
-        var mConc = Mat("RubbleChunk", ph: "concrete_wall_008", c: new Color(0.78f, 0.73f, 0.64f), smooth: 0.08f);
+        var mConc = Mat("RubbleChunk", ph: "concrete_wall_008", c: new Color(0.56f, 0.53f, 0.49f), smooth: 0.04f);
         var mBrick = Mat("Brick", c: new Color(0.62f, 0.36f, 0.25f), smooth: 0.08f, tex: "NoiseGrey");
         var mWire = Mat("Wire", c: new Color(0.03f, 0.03f, 0.03f), smooth: 0.3f);
         foreach (var m in new[] { mSlab, mParapet, mHeap, mPipe }) FarVisible.Add(m.name);
@@ -617,7 +652,7 @@ public static partial class CityDetail
                     }
                 }
                 // bullet sprays and shell holes over the whole wall
-                int nSpray = Mathf.RoundToInt(L / 10f * (0.5f + 2.5f * hit) * R(0.5f, 1.5f) * (b.kit ? 0.5f : 1f));
+                int nSpray = Mathf.RoundToInt(L / 10f * (0.3f + 1.2f * hit) * R(0.5f, 1.5f) * (b.kit ? 0.5f : 1f));
                 for (int k = 0; k < nSpray; k++)
                 {
                     float sz = R(1.4f, 3.2f);
@@ -718,7 +753,7 @@ public static partial class CityDetail
     static void StreetDebris()
     {
         var mSand = Mat("SandSheet", tex: "SandSheet", c: Color.white, smooth: 0.05f, transparent: true);
-        var mConc = Mat("RubbleChunk", ph: "concrete_wall_008", c: new Color(0.78f, 0.73f, 0.64f), smooth: 0.08f);
+        var mConc = Mat("RubbleChunk", ph: "concrete_wall_008", c: new Color(0.56f, 0.53f, 0.49f), smooth: 0.04f);
         var mBrick = Mat("Brick", c: new Color(0.62f, 0.36f, 0.25f), smooth: 0.08f, tex: "NoiseGrey");
         var mPaper = TwoSided(Mat("Paper", c: new Color(0.86f, 0.85f, 0.8f), smooth: 0.1f));
         var mPlastic = Mat("Plastic", c: new Color(0.25f, 0.42f, 0.55f), smooth: 0.6f);
