@@ -43,7 +43,7 @@ public class MarkerTool : MonoBehaviour
         var flag = GameObject.CreatePrimitive(PrimitiveType.Cube);
         Destroy(flag.GetComponent<Collider>());
         flag.transform.position = p + new Vector3(0.6f, 5.4f, 0); flag.transform.localScale = new Vector3(1.2f, 0.7f, 0.04f);
-        var m = new Material(Shader.Find("Universal Render Pipeline/Lit")); m.SetColor("_BaseColor", new Color(1f, 0.85f, 0f));
+        var m = Rp.Lit("Marker", new Color(1f, 0.85f, 0f));
         pole.GetComponent<Renderer>().material = m; flag.GetComponent<Renderer>().material = m;
     }
 

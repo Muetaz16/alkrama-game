@@ -42,7 +42,7 @@ public static class NavDebug
             }
         }
         var tex = new Texture2D(N, N, TextureFormat.RGBA32, false); tex.SetPixels32(px); tex.Apply();
-        var outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../unity_shots"));
+        var outDir = HdrpSetup.ShotsDir();
         File.WriteAllBytes(Path.Combine(outDir, "navmesh_top.png"), tex.EncodeToPNG());
         Debug.Log("[nav] saved navmesh_top.png");
     }

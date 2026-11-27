@@ -22,6 +22,7 @@ public static class LookPro
     {
         var scene = EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
         Build();
+        HdrpSetup.ConvertAll();
         EditorSceneManager.SaveScene(scene);
         AssetDatabase.SaveAssets();
     }
@@ -30,6 +31,7 @@ public static class LookPro
     {
         // the knife's mesh is read at run time to turn it the right way round
         if (AssetImporter.GetAtPath("Assets/Resources/Guns/knife.fbx") is ModelImporter mi && !mi.isReadable) { mi.isReadable = true; mi.SaveAndReimport(); }
+        HdrpSetup.BeginUrp();
         Sky();
         Surfaces();
         Rocks();
@@ -40,6 +42,7 @@ public static class LookPro
     static void Sky()
     {
         if (!File.Exists(SkyFile)) { Debug.LogWarning("[pro] no sky file"); return; }
+        if (GraphicsSettings.defaultRenderPipeline is UnityEngine.Rendering.HighDefinition.HDRenderPipelineAsset) return;     // HDRP: the sky is SkySet's cubemap, set by CinematicLook / TimeOfDay
         var ti = (TextureImporter)AssetImporter.GetAtPath(SkyFile);
         ti.textureShape = TextureImporterShape.Texture2D; ti.sRGBTexture = false; ti.mipmapEnabled = false;
         ti.wrapModeU = TextureWrapMode.Repeat; ti.wrapModeV = TextureWrapMode.Clamp; ti.maxTextureSize = 4096;

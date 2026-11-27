@@ -15,10 +15,7 @@ public static class GunFactory
     // ---------- materials and textures ----------
     static Material Lit(Color c, float metal, float smooth, Texture tex = null, string name = "gun")
     {
-        var m = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = name };
-        m.SetColor("_BaseColor", c); m.SetFloat("_Metallic", metal); m.SetFloat("_Smoothness", smooth);
-        if (tex) m.SetTexture("_BaseMap", tex);
-        return m;
+        return Rp.Lit(name, c, metal, smooth, tex);            // HDRP/Lit from the build's template (Rp.cs)
     }
 
     // fine grey noise: parkerised steel, polymer
@@ -314,11 +311,7 @@ public static class GunFactory
 
     static Material Pbr(string name, TexSet t, Color tint, float smoothness, float bump)
     {
-        var m = new Material(Shader.Find("Universal Render Pipeline/Lit")) { name = name };
-        m.SetTexture("_BaseMap", t.albedo); m.SetColor("_BaseColor", tint);
-        m.SetTexture("_BumpMap", t.normal); m.SetFloat("_BumpScale", bump); m.EnableKeyword("_NORMALMAP");
-        m.SetTexture("_MetallicGlossMap", t.ms); m.SetFloat("_Metallic", 1f); m.SetFloat("_Smoothness", smoothness); m.EnableKeyword("_METALLICSPECGLOSSMAP");
-        return m;
+        return Rp.Pbr(name, t.albedo, t.normal, t.ms, tint, smoothness, bump);     // HDRP mask map: R metal, A smoothness
     }
 
     static Material mSteel, mCover, mMag, mBare, mScope, mWood, mGrip, mPoly, mEdge, mBore, kBlade, kGuard, kHandle;
@@ -343,11 +336,10 @@ public static class GunFactory
         mWood = Pbr("GunWood", tWood, Color.white, 1f, 1f);                                           // laminated stock and handguards
         mGrip = Pbr("GunGrip", tWood, new Color(0.74f, 0.66f, 0.64f), 0.85f, 1f);                     // pistol grip: same laminate, darker with hand oil
         mPoly = Pbr("GunPolymer", tPoly, Color.white, 1f, 1f);
-        mEdge = Lit(new Color(0.86f, 0.86f, 0.87f), 1f, 0.6f, null, "GunEdgeWear");
+        mEdge = null;
         var et = new Texture2D(256, 32, TextureFormat.RGBA32, true) { name = "GunEdgeWear", wrapModeU = TextureWrapMode.Repeat, wrapModeV = TextureWrapMode.Clamp, filterMode = FilterMode.Trilinear, anisoLevel = 4 };
         et.SetPixels32(EdgeData(256, 32)); et.Apply(true, true);
-        mEdge.SetTexture("_BaseMap", et); mEdge.SetFloat("_AlphaClip", 1f); mEdge.SetFloat("_Cutoff", 0.5f); mEdge.SetFloat("_AlphaToMask", 1f);
-        mEdge.EnableKeyword("_ALPHATEST_ON"); mEdge.SetOverrideTag("RenderType", "TransparentCutout"); mEdge.renderQueue = (int)RenderQueue.AlphaTest;
+        mEdge = Rp.Cutout("GunEdgeWear", new Color(0.86f, 0.86f, 0.87f), 1f, 0.6f, et, 0.5f);
         mBore = Lit(new Color(0.012f, 0.012f, 0.012f), 0f, 0.05f, null, "GunBore");
 
         MakePlans();

@@ -20,8 +20,8 @@ public class AutoTest : MonoBehaviour
         player.externalInput = true; cam.externalInput = true;
         // nobody at the mouse or keyboard may steer or fire during the run (a click in the window used to empty half a magazine)
         var wc0 = player.GetComponent<WeaponController>(); if (wc0) wc0.externalInput = true; startYaw = player.yaw; startPos = player.transform.position;
-        outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../unity_shots"));
-        if (!Application.isEditor) outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../../unity_shots"));
+        outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../unity_shots_hdrp"));
+        if (!Application.isEditor) outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../../unity_shots_hdrp"));
         Directory.CreateDirectory(outDir);
         log = new StreamWriter(Path.Combine(outDir, "autotest.log"));
         log.WriteLine($"loaded after {Time.realtimeSinceStartup:F1} s, {SystemInfo.graphicsDeviceName}, {Screen.width}x{Screen.height}{(PlayerController.LegacyGait ? ", LEGACY GAIT" : "")}{(PlayerController.GaitScale != 1f ? $", gait scale {PlayerController.GaitScale}" : "")}"); log.Flush();

@@ -1,4 +1,4 @@
-﻿// Builds the Corniche scene from the city exported by the web prototype.
+// Builds the Corniche scene from the city exported by the web prototype.
 //   Unity.exe -batchmode -quit -projectPath <proj> -executeMethod SceneBuilder.Build
 // 1. URP with PC ("High") and phone ("Mobile") quality, 2. the city .glb with colliders,
 // 3. sun, sky, sea, fog, post-processing, 4. a test camera shot saved to ../unity_shots/
@@ -9,7 +9,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
-using UnityEngine.Rendering.Universal;
+using UnityEngine.Rendering.HighDefinition;
 
 public static class SceneBuilder
 {
@@ -19,8 +19,8 @@ public static class SceneBuilder
 
     public static void Build()
     {
-        var urp = SetupUrp();
-        // re-import the models now URP is active, so their materials use URP shaders
+        var urp = HdrpSetup.Pipeline(); HdrpSetup.Templates();
+        // re-import the models now HDRP is active, so their materials use HDRP shaders
         AssetDatabase.ImportAsset(CityGlb, ImportAssetOptions.ForceUpdate);
         AssetDatabase.ImportAsset(Root + "/Models/lighthouse.glb", ImportAssetOptions.ForceUpdate);
 
@@ -75,16 +75,9 @@ public static class SceneBuilder
         sea.AddComponent<MeshFilter>().sharedMesh = seaMesh;
         sea.AddComponent<MeshRenderer>().sharedMaterial = seaMat;
 
-        // post-processing: filmic colours, a little bloom, warm Benghazi grade
-        var profile = ScriptableObject.CreateInstance<VolumeProfile>();
-        var tone = profile.Add<Tonemapping>(true); tone.mode.Override(TonemappingMode.ACES);
-        var bloom = profile.Add<Bloom>(true); bloom.intensity.Override(0.35f); bloom.threshold.Override(1.1f);
-        var grade = profile.Add<ColorAdjustments>(true); grade.postExposure.Override(-0.35f); grade.contrast.Override(12f); grade.saturation.Override(6f);
-        var wb = profile.Add<WhiteBalance>(true); wb.temperature.Override(8f);
-        var vig = profile.Add<Vignette>(true); vig.intensity.Override(0.18f);
-        AssetDatabase.CreateAsset(profile, Root + "/PostFX.asset");
+        // post-processing: an empty global volume; CinematicLook.Apply fills its profile (HDRP overrides)
         var volume = new GameObject("Post FX").AddComponent<Volume>();
-        volume.isGlobal = true; volume.sharedProfile = profile;
+        volume.isGlobal = true;
 
         // camera looking at the lighthouse from the seafront
         var lighthouse = FindLighthouse();
@@ -94,8 +87,7 @@ public static class SceneBuilder
         var cam = new GameObject("Main Camera").AddComponent<Camera>();
         cam.tag = "MainCamera";
         cam.farClipPlane = 2000f;
-        cam.GetUniversalAdditionalCameraData().renderPostProcessing = true;
-        cam.GetUniversalAdditionalCameraData().antialiasing = AntialiasingMode.SubpixelMorphologicalAntiAliasing;
+        cam.gameObject.AddComponent<HDAdditionalCameraData>();        // CinematicLook sets it up
         var seaDir = SeaDir(map);
         PlaceShotCamera(cam, lighthouse, seaDir);
 
@@ -110,33 +102,6 @@ public static class SceneBuilder
         PlaceShotCamera(cam, lighthouse, seaDir);
         EditorSceneManager.SaveScene(scene, ScenePath);
         AssetDatabase.SaveAssets();
-    }
-
-    // URP asset + renderer, used by both quality levels; phone level is lighter
-    static UniversalRenderPipelineAsset SetupUrp()
-    {
-        const string dir = "Assets/Settings";
-        Directory.CreateDirectory(dir);
-        var data = ScriptableObject.CreateInstance<UniversalRendererData>();
-        AssetDatabase.CreateAsset(data, dir + "/URP_Renderer.asset");
-        var pc = UniversalRenderPipelineAsset.Create(data);
-        pc.shadowDistance = 95f; pc.shadowCascadeCount = 3; pc.msaaSampleCount = 2;   // shadows past ~100 m are lost in the haze anyway
-        pc.supportsHDR = true;
-        AssetDatabase.CreateAsset(pc, dir + "/URP_PC.asset");
-        var phone = UniversalRenderPipelineAsset.Create(data);
-        phone.shadowDistance = 60f; phone.shadowCascadeCount = 1; phone.msaaSampleCount = 1;
-        phone.renderScale = 0.85f; phone.supportsHDR = false;
-        AssetDatabase.CreateAsset(phone, dir + "/URP_Mobile.asset");
-        GraphicsSettings.defaultRenderPipeline = pc;
-        var names = QualitySettings.names;
-        for (int i = 0; i < names.Length; i++)
-        {
-            QualitySettings.SetQualityLevel(i, false);
-            QualitySettings.renderPipeline = i < names.Length / 2 ? phone : pc;
-        }
-        QualitySettings.SetQualityLevel(names.Length - 1, false);
-        AssetDatabase.SaveAssets();
-        return pc;
     }
 
     // lighthouse spot from the exported game data; the web game uses x east / z south and
@@ -228,13 +193,14 @@ public static class SceneBuilder
         const int w = 1600, h = 900;
         var rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32);
         cam.targetTexture = rt;
+        for (int warm = 0; warm < 8; warm++) cam.Render();        // HDRP: temporal AA, sky lighting and fog settle over a few frames
         cam.Render();
         RenderTexture.active = rt;
         var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
         tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
         tex.Apply();
         cam.targetTexture = null; RenderTexture.active = null;
-        var outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../unity_shots"));
+        var outDir = HdrpSetup.ShotsDir();
         Directory.CreateDirectory(outDir);
         File.WriteAllBytes(Path.Combine(outDir, file), tex.EncodeToPNG());
         Object.DestroyImmediate(rt);

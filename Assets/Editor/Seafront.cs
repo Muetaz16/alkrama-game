@@ -1,4 +1,4 @@
-﻿// The Corniche seafront, modelled on photos of Benghazi's Corniche:
+// The Corniche seafront, modelled on photos of Benghazi's Corniche:
 //   beach     dry sand from the sea wall down past the breakwater rocks, wet dark sand sloping under the
 //             water (the water shader draws the surf line where they meet)
 //   railing   white balustrade on the sea wall (turned balusters, square posts, top rail), with gaps
@@ -27,12 +27,14 @@ public static class Seafront
     {
         var scene = EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
         Build();
+        HdrpSetup.ConvertAll();
         EditorSceneManager.SaveScene(scene);
         AssetDatabase.SaveAssets();
     }
 
     public static void Build()
     {
+        HdrpSetup.BeginUrp();
         rnd = new System.Random(2011);
         batches.Clear(); mats.Clear();
         var old = GameObject.Find("Seafront"); if (old) Object.DestroyImmediate(old);

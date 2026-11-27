@@ -28,7 +28,7 @@ public static class GlassSetup
         {
             var r = mc.GetComponent<MeshRenderer>(); if (!r || !mc.sharedMesh) continue;
             bool facade = false, mask = false;
-            foreach (var m in r.sharedMaterials) if (m && m.name.StartsWith("Facade")) { facade = true; if (m.HasProperty("_MetallicGlossMap") && m.GetTexture("_MetallicGlossMap")) mask = true; }
+            foreach (var m in r.sharedMaterials) if (m && m.name.StartsWith("Facade")) { facade = true; if (m.HasProperty("_MaskMap") && m.GetTexture("_MaskMap")) mask = true; }
             if (!facade) continue;
             facadeColliders++; if (mc.sharedMesh.isReadable) readable++; if (mask) withMask++;
         }

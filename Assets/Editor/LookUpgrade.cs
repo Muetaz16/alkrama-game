@@ -1,4 +1,4 @@
-﻿// Makes the Corniche look real: scanned textures (Poly Haven, CC0) on ground, roads, walls and rocks,
+// Makes the Corniche look real: scanned textures (Poly Haven, CC0) on ground, roads, walls and rocks,
 // a sea floor that slopes away from the shore, the Benghazi/Water shader, better palm fronds,
 // ambient occlusion and sky reflections.
 //   Unity.exe -batchmode -quit -projectPath <proj> -executeMethod LookUpgrade.Run
@@ -9,7 +9,6 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
-using UnityEngine.Rendering.Universal;
 
 public static class LookUpgrade
 {
@@ -37,8 +36,8 @@ public static class LookUpgrade
         CityDetail.Build();
         LookPro.Build();
         GameplaySetup.Run();
-        CinematicLook.Apply();
-        RetintFacades();
+        RetintFacades();                // before the look: it still works on the generators' URP-style materials
+        CinematicLook.Apply();          // converts them to HDRP, sets the pipeline, volumes, sun, camera, sea
         EditorSceneManager.SaveScene(scene);
         AssetDatabase.SaveAssets();
         var cam = Object.FindObjectsByType<Camera>(FindObjectsInactive.Include).FirstOrDefault(c => c.CompareTag("MainCamera")) ?? Object.FindFirstObjectByType<Camera>();
@@ -82,9 +81,9 @@ public static class LookUpgrade
     public static void Run()
     {
         Directory.CreateDirectory(Gen); Directory.CreateDirectory(Mats);
+        HdrpSetup.BeginUrp();
         foreach (var f in Directory.GetFiles(Mats, "Mesh_*.asset")) AssetDatabase.DeleteAsset(f.Replace('\\', '/'));
         SetupTextures();
-        SetupRenderer();
         var scene = EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
         var city = GameObject.Find("Benghazi Corniche");
 
@@ -92,6 +91,7 @@ public static class LookUpgrade
         Materials(city);
         Water();
         Environment();
+        HdrpSetup.ConvertAll();
 
         EditorSceneManager.SaveScene(scene);
         AssetDatabase.SaveAssets();
@@ -201,40 +201,6 @@ public static class LookUpgrade
         for (int y = 0; y < h; y++) for (int x = w / 2 - 3; x <= w / 2 + 3; x++) px[y * w + x] = Color.Lerp(light, new Color(0.62f, 0.55f, 0.35f), 0.55f);
         tex.SetPixels(px); tex.Apply();
         return tex;
-    }
-
-    // ---------- renderer: depth texture for the water, SSAO ----------
-    static void SetupRenderer()
-    {
-        foreach (var path in new[] { "Assets/Settings/URP_PC.asset", "Assets/Settings/URP_Mobile.asset" })
-        {
-            var a = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>(path);
-            a.supportsCameraDepthTexture = true;
-            EditorUtility.SetDirty(a);
-        }
-        var data = AssetDatabase.LoadAssetAtPath<UniversalRendererData>("Assets/Settings/URP_Renderer.asset");
-        var ssaoType = typeof(UniversalRendererData).Assembly.GetType("UnityEngine.Rendering.Universal.ScreenSpaceAmbientOcclusion");
-        if (ssaoType != null)
-        {
-            foreach (var f in data.rendererFeatures.Where(f => !f || f.GetType() == ssaoType).ToList())
-            { data.rendererFeatures.Remove(f); if (f) Object.DestroyImmediate(f, true); }
-            var ssao = (ScriptableRendererFeature)ScriptableObject.CreateInstance(ssaoType);
-            ssao.name = "SSAO";
-            AssetDatabase.AddObjectToAsset(ssao, data);
-            data.rendererFeatures.Add(ssao);
-            // stronger, wider occlusion than the default
-            var so = new SerializedObject(ssao);
-            var it = so.GetIterator();
-            while (it.Next(true))
-            {
-                if (it.name == "Intensity" && it.propertyType == SerializedPropertyType.Float) it.floatValue = 1.4f;
-                if (it.name == "Radius" && it.propertyType == SerializedPropertyType.Float) it.floatValue = 0.6f;
-            }
-            so.ApplyModifiedPropertiesWithoutUndo();
-            EditorUtility.SetDirty(data);
-            Debug.Log("[look] SSAO added");
-        }
-        AssetDatabase.SaveAssets();
     }
 
     // ---------- sea floor: land at 0, under water it slopes down with distance from the shore ----------
@@ -461,7 +427,7 @@ public static class LookUpgrade
                 if (dst)
                 {
                     // keep double-sided surfaces double-sided (the web export's floors face down)
-                    if (src.HasProperty("_Cull") && src.GetFloat("_Cull") == 0 && dst.GetFloat("_Cull") != 0) { dst.SetFloat("_Cull", 0); dst.doubleSidedGI = true; }
+                    if (HdrpSetup.TwoSided(src) && dst.GetFloat("_Cull") != 0) { dst.SetFloat("_Cull", 0); dst.doubleSidedGI = true; }
                     mats[k] = dst; changed++;
                 }
             }
@@ -531,35 +497,8 @@ public static class LookUpgrade
         sky.SetFloat("_SunSize", 0.035f); sky.SetFloat("_AtmosphereThickness", 1.02f);
         sky.SetColor("_SkyTint", new Color(0.62f, 0.64f, 0.68f)); sky.SetFloat("_Exposure", 1.05f);
 
-        var old = GameObject.Find("Environment"); if (old) Object.DestroyImmediate(old);
-        var env = new GameObject("Environment");
-        var probe = env.AddComponent<ReflectionProbe>();
-        probe.mode = ReflectionProbeMode.Realtime;
-        probe.refreshMode = ReflectionProbeRefreshMode.ViaScripting;
-        probe.size = new Vector3(2000, 400, 2000);
-        probe.resolution = 256;
-        probe.clearFlags = ReflectionProbeClearFlags.Skybox;
-        probe.cullingMask = 0;    // sky only: cheap, and it is what the sea mostly reflects
-        env.AddComponent<EnvironmentInit>().probe = probe;
-        DynamicGI.UpdateEnvironment();
-
-        var vol = Object.FindFirstObjectByType<Volume>();
-        var prof = vol.sharedProfile;
-        if (prof.TryGet<ColorAdjustments>(out var ca)) { ca.postExposure.Override(-0.05f); ca.contrast.Override(20f); ca.saturation.Override(-12f); }
-        if (prof.TryGet<Bloom>(out var bl)) { bl.intensity.Override(0.65f); bl.threshold.Override(0.9f); }
-        // film look: fine grain, a touch of lens fringing, light motion blur; depth of field is switched on by
-        // the weapon while aiming down the sights
-        if (!prof.TryGet<FilmGrain>(out var fg)) fg = prof.Add<FilmGrain>(true);
-        fg.type.Override(FilmGrainLookup.Thin1); fg.intensity.Override(0.22f); fg.response.Override(0.75f);
-        if (!prof.TryGet<ChromaticAberration>(out var chr)) chr = prof.Add<ChromaticAberration>(true);
-        chr.intensity.Override(0.07f);
-        if (!prof.TryGet<MotionBlur>(out var mb)) mb = prof.Add<MotionBlur>(true);
-        mb.intensity.Override(0.16f); mb.quality.Override(MotionBlurQuality.Low);
-        if (!prof.TryGet<DepthOfField>(out var dof)) dof = prof.Add<DepthOfField>(true);
-        dof.mode.Override(DepthOfFieldMode.Off); dof.focalLength.Override(55f); dof.aperture.Override(4f); dof.bladeCount.Override(6);
-        if (prof.TryGet<Vignette>(out var vg)) { vg.intensity.Override(0.24f); vg.smoothness.Override(0.45f); }
-        if (!prof.Has<ShadowsMidtonesHighlights>()) { var smh = prof.Add<ShadowsMidtonesHighlights>(true); smh.shadows.Override(new Vector4(0.95f, 0.98f, 1.06f, 0)); smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.94f, 0)); }
-        EditorUtility.SetDirty(prof);
+        // HDRP: the sky lights and reflects by itself (no reflection probe), and the post-processing overrides
+        // are written by CinematicLook.PostFx
     }
 
     // ---------- comparison shots ----------

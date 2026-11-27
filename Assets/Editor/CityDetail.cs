@@ -34,6 +34,7 @@ public static partial class CityDetail
     {
         var scene = EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
         Build();
+        HdrpSetup.ConvertAll();
         EditorSceneManager.SaveScene(scene);
         AssetDatabase.SaveAssets();
     }
@@ -41,6 +42,7 @@ public static partial class CityDetail
     // scene must be open
     public static void Build()
     {
+        HdrpSetup.BeginUrp();
         rnd = new System.Random(1911);
         batches.Clear(); matCache.Clear(); counts = 0; carMarks.Clear();
         var old = GameObject.Find("City Detail"); if (old) Object.DestroyImmediate(old);

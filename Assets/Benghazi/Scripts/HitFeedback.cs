@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
-using UnityEngine.Rendering.Universal;
+using UnityEngine.Rendering.HighDefinition;
 
 // What being hit, and dying, looks and sounds like - for the player and for the men he fights.
 //   player hit    a grunt, blood on the edges of the view that runs and fades, on top of the red flash and
@@ -31,7 +31,7 @@ public class HitFeedback : MonoBehaviour
     readonly List<Splat> splats = new();
     // blood in the world
     const int MaxMarks = 48;
-    readonly Queue<Transform> marks = new(); Material bloodMat; Mesh quad;
+    readonly Queue<Transform> marks = new(); Material bloodMat, bloodDecal; Mesh quad;
     class Pool { public Transform t; public float born, size; }
     readonly List<Pool> pools = new();
 
@@ -76,7 +76,9 @@ public class HitFeedback : MonoBehaviour
 
         splatTex = Blot(256, 5, new Color(0.26f, 0.004f, 0.004f), 0.2f);     // soft and dark: blood in the eye, not a painted flower blackTex = Texture2D.whiteTexture;
         var prim = GameObject.CreatePrimitive(PrimitiveType.Quad); quad = prim.GetComponent<MeshFilter>().sharedMesh; Destroy(prim);
-        bloodMat = new Material(Shader.Find("Sprites/Default")) { name = "Blood", mainTexture = Blot(256, 9, new Color(0.2f, 0.005f, 0.005f)) };
+        var blot = Blot(256, 9, new Color(0.2f, 0.005f, 0.005f));
+        bloodMat = new Material(Shader.Find("Sprites/Default")) { name = "Blood", mainTexture = blot };
+        bloodDecal = Rp.Decal("Blood decal", blot, new Color(1.6f, 1f, 1f), 0.55f);         // wet: it catches the light
     }
 
     void Update()
@@ -108,7 +110,7 @@ public class HitFeedback : MonoBehaviour
         {
             var p = pools[i]; if (!p.t) { pools.RemoveAt(i); continue; }
             float k = Mathf.Clamp01((Time.time - p.born) / 7f); k = 1 - (1 - k) * (1 - k);
-            p.t.localScale = Vector3.one * Mathf.Lerp(0.12f, p.size, k);
+            { float sz = Mathf.Lerp(0.12f, p.size, k); p.t.localScale = bloodDecal ? new Vector3(sz, sz, 1f) : Vector3.one * sz; }
             if (k >= 1) pools.RemoveAt(i);
         }
     }
@@ -215,13 +217,18 @@ public class HitFeedback : MonoBehaviour
         if (!t)
         {
             var go = new GameObject("Blood"); go.layer = 2;
-            go.AddComponent<MeshFilter>().sharedMesh = quad;
-            var r = go.AddComponent<MeshRenderer>(); r.sharedMaterial = bloodMat; r.shadowCastingMode = ShadowCastingMode.Off; r.receiveShadows = false;
+            if (bloodDecal) { var dp = go.AddComponent<DecalProjector>(); dp.material = bloodDecal; dp.size = new Vector3(1, 1, 0.3f); dp.pivot = Vector3.zero; dp.drawDistance = 90f; dp.fadeScale = 0.85f; }
+            else
+            {
+                go.AddComponent<MeshFilter>().sharedMesh = quad;
+                var r = go.AddComponent<MeshRenderer>(); r.sharedMaterial = bloodMat; r.shadowCastingMode = ShadowCastingMode.Off; r.receiveShadows = false;
+            }
             t = go.transform;
         }
         marks.Enqueue(t);
+        // HDRP decal: laid into the surface, lit and shadowed with it (the box is 1 x 1 x 0.3 m, scaled)
         t.SetPositionAndRotation(p, Quaternion.LookRotation(-n) * Quaternion.Euler(0, 0, Random.Range(0f, 360f)));
-        t.localScale = Vector3.one * size; t.gameObject.SetActive(true);
+        t.localScale = bloodDecal ? new Vector3(size, size, 1f) : Vector3.one * size; t.gameObject.SetActive(true);
         BloodMarks++;
         return t;
     }

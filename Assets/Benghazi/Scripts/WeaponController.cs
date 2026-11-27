@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
-using UnityEngine.Rendering.Universal;
+using UnityEngine.Rendering.HighDefinition;
 
 // AK-47, bolt-action sniper and combat knife.
 // Left mouse / RT = fire (knife: slash), right mouse / LT = aim (sniper: scope; knife: heavy stab),
@@ -95,7 +95,7 @@ public class WeaponController : MonoBehaviour
         vm.BuildArms(anim);                              // the soldier's own arms hold the gun in first person
         vm.onSound = OnVmSound; vm.onKnifeHit = MeleeHit; vm.onEject = () => Shell(1);
 
-        holeMat = new Material(Shader.Find("Universal Render Pipeline/Lit")); holeMat.SetColor("_BaseColor", new Color(0.05f, 0.045f, 0.04f)); holeMat.SetFloat("_Smoothness", 0);
+        holeMat = Rp.Decal("Bullet hole", HoleTexture(64), Color.white, 0.02f);      // HDRP decal: sinks into the wall's own surface
         scopeTex = ScopeTexture(1024); dotTex = DotTexture(32);
         SetView(camRig.firstPerson);
         ShowWeapon();
@@ -196,7 +196,15 @@ public class WeaponController : MonoBehaviour
     DepthOfField dof; float focusDist = 30f; bool dofSearched;
     void AimFocus()
     {
-        if (!dofSearched) { dofSearched = true; var vol = FindFirstObjectByType<Volume>(); if (vol && vol.profile) vol.profile.TryGet(out dof); }
+        if (!dofSearched)
+        {
+            // its own small global volume: the scene's profile asset is never written to at run time
+            dofSearched = true;
+            var vg = new GameObject("Aim focus volume"); vg.transform.SetParent(transform, false);
+            var vol = vg.AddComponent<Volume>(); vol.isGlobal = true; vol.priority = 30;
+            var prof = ScriptableObject.CreateInstance<VolumeProfile>(); dof = prof.Add<DepthOfField>(true); vol.profile = prof;
+            dof.focusMode.Override(DepthOfFieldMode.Off);
+        }
         if (dof == null) return;
         bool on = camRig.firstPerson && aimT > 0.5f && !W.melee && !(W.scope && aimT > 0.88f);
         if (on)
@@ -204,12 +212,14 @@ public class WeaponController : MonoBehaviour
             var ray = cam.ViewportPointToRay(new Vector3(0.5f, 0.5f));
             float target = RayNotSelf(ray.origin, ray.direction, 300f, out var h) ? h.distance : 300f;
             focusDist = Mathf.Lerp(focusDist, target, 1 - Mathf.Exp(-8 * Time.deltaTime));
-            dof.mode.Override(DepthOfFieldMode.Bokeh);
-            // a small aperture: the rear sight goes soft the way it does to the eye, it must not melt into a blob
-            dof.focalLength.Override(32f); dof.aperture.Override(20f);
-            dof.focusDistance.Override(Mathf.Max(1f, focusDist));
+            // HDRP manual ranges: the gun right in front of the eye goes soft the way it does to the eye (it must not
+            // melt into a blob), what the cross-hair is on stays sharp, the far distance softens a little
+            dof.focusMode.Override(DepthOfFieldMode.Manual);
+            dof.nearFocusStart.Override(0.12f); dof.nearFocusEnd.Override(Mathf.Min(0.9f, Mathf.Max(0.45f, focusDist * 0.5f)));
+            dof.farFocusStart.Override(Mathf.Max(8f, focusDist * 3f)); dof.farFocusEnd.Override(Mathf.Max(30f, focusDist * 12f));
+            dof.nearMaxBlur = 3.5f; dof.farMaxBlur = 2.5f;
         }
-        else if (dof.mode.value != DepthOfFieldMode.Off) dof.mode.Override(DepthOfFieldMode.Off);
+        else if (dof.focusMode.value != DepthOfFieldMode.Off) dof.focusMode.Override(DepthOfFieldMode.Off);
     }
 
     bool tacticalReload;
@@ -444,12 +454,12 @@ public class WeaponController : MonoBehaviour
 
     void Hole(RaycastHit h)
     {
-        var q = holes.Count >= 120 ? holes.Dequeue() : GameObject.CreatePrimitive(PrimitiveType.Quad);
-        if (q.TryGetComponent<Collider>(out var c)) Destroy(c);
-        q.GetComponent<Renderer>().sharedMaterial = holeMat;
-        q.GetComponent<Renderer>().shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        q.transform.SetPositionAndRotation(h.point + h.normal * 0.01f, Quaternion.LookRotation(-h.normal) * Quaternion.Euler(0, 0, Random.Range(0, 360)));
-        q.transform.localScale = Vector3.one * Random.Range(0.06f, 0.11f) * (W.scope ? 1.6f : 1f);
+        GameObject q;
+        if (holes.Count >= 120) q = holes.Dequeue();
+        else { q = new GameObject("Bullet hole") { layer = 2 }; var dp = q.AddComponent<DecalProjector>(); dp.material = holeMat; dp.size = new Vector3(1, 1, 0.12f); dp.pivot = Vector3.zero; dp.drawDistance = 80f; dp.fadeScale = 0.85f; }
+        q.transform.SetPositionAndRotation(h.point, Quaternion.LookRotation(-h.normal) * Quaternion.Euler(0, 0, Random.Range(0, 360)));
+        float hs = Random.Range(0.06f, 0.11f) * (W.scope ? 1.6f : 1f) * 1.5f;          // the texture has a soft rim: a little larger than the old quad
+        q.transform.localScale = new Vector3(hs, hs, 1f);
         q.transform.SetParent(h.collider.transform, true);
         holes.Enqueue(q);
     }
@@ -513,6 +523,23 @@ public class WeaponController : MonoBehaviour
             px[y * n + x] = new Color(0, 0, 0, Mathf.Max(a, d > 0.995f ? 1 : 0));
         }
         t.SetPixels(px); t.Apply(); return t;
+    }
+
+    // a round's hole: a dark pit with a chipped, paler rim, clear outside it (used as an HDRP decal)
+    static Texture2D HoleTexture(int n)
+    {
+        var t = new Texture2D(n, n, TextureFormat.RGBA32, true) { wrapMode = TextureWrapMode.Clamp, name = "BulletHole" };
+        var rnd = new System.Random(4); var ph = new float[6]; for (int i = 0; i < ph.Length; i++) ph[i] = (float)rnd.NextDouble() * 6.2832f;
+        var px = new Color32[n * n];
+        for (int y = 0; y < n; y++) for (int x = 0; x < n; x++)
+        {
+            float dx = (x + 0.5f) / n * 2 - 1, dy = (y + 0.5f) / n * 2 - 1, r = Mathf.Sqrt(dx * dx + dy * dy), a = Mathf.Atan2(dy, dx);
+            float edge = 0.6f; for (int i = 0; i < ph.Length; i++) edge += Mathf.Sin(a * (i + 3) + ph[i]) * 0.045f;
+            float pit = Mathf.Clamp01((edge * 0.55f - r) / 0.1f), rim = Mathf.Clamp01((edge - r) / 0.16f);
+            var c = Color.Lerp(new Color(0.42f, 0.4f, 0.37f), new Color(0.03f, 0.028f, 0.025f), pit);
+            px[y * n + x] = new Color(c.r, c.g, c.b, Mathf.Max(pit, rim * 0.75f));
+        }
+        t.SetPixels32(px); t.Apply(true); return t;
     }
 
     static Texture2D DotTexture(int n)

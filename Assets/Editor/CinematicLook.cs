@@ -1,74 +1,44 @@
-// Cinematic rendering pass: configuration only. Nothing in the scene is deleted or regenerated, no new assets.
+// Cinematic rendering pass for the HDRP build: configuration only. Nothing in the scene is regenerated.
 //   Unity.exe -batchmode -quit -projectPath <proj> -executeMethod CinematicLook.Run
 //
-// What it touches (all found, never created, except post-FX overrides inside the existing profile):
-//   Assets/Settings/URP_PC.asset        shadows, MSAA, HDR grading, render scale (URP_Mobile is left alone)
-//   Assets/Settings/URP_Renderer.asset  the existing SSAO feature's quality
-//   the global Volume's profile         tonemapping, grade, bloom, vignette, grain, motion blur ...
-//   Sun, RenderSettings, reflection probe, Main Camera, QualitySettings (levels that use URP_PC)
+// What it sets up (all absolute values, safe to run again):
+//   Assets/Settings/HDRP_PC.asset         the pipeline (HdrpSetup.Pipeline) and the run-time material templates
+//   every generator material              URP/Lit -> HDRP/Lit (HdrpSetup.ConvertAll)
+//   Assets/Benghazi/PostFX.asset          tonemapping, grade, bloom, vignette, grain, motion blur, lens flare,
+//                                          ambient occlusion, screen-space reflections and bounce light, contact
+//                                          shadows, shadow cascades            -> the scene's "Post FX" volume
+//   Assets/Benghazi/HDRP/SkyAndFog.asset  the afternoon sky, fog, fixed exposure (TimeOfDay.Write, the same code
+//                                          the game uses when the hour changes)  -> the scene's "Sky and Fog" volume
+//   Sun                                   HDRP directional light: lux, soft shadows, contact shadows, sun shafts
+//   Main Camera                           temporal anti-aliasing, dithering, dynamic resolution allowed
+//   Sea                                   the URP water mesh is switched off; an HDRP Water System ocean takes its place
 //
-// IMPORTANT, found while writing this: Assets/Benghazi/PostFX.asset is saved with ten EMPTY component slots
-// ("- {fileID: 0}"). SceneBuilder/LookUpgrade add the overrides with profile.Add<T>() but never store them inside
-// the asset (AssetDatabase.AddObjectToAsset), so they only live in the editor session that created them. A player
-// built by a later Unity process has NO post-processing at all - no tonemapping, no grade, no bloom, and
-// WeaponController.AimFocus never finds a DepthOfField. PostFx() below repairs that; it is the biggest single
-// change in this file.
-//
-// Safe to run again: every value is an absolute constant, nothing is relative to what was there before.
-// To keep the look after a full rebuild, call CinematicLook.Apply() at the end of LookUpgrade.All (see Apply).
+// The look itself (grade, haze, sun colours per hour) is the one tuned on the URP branch; see TimeOfDay.cs for
+// how its numbers carry over to HDRP's units.
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
-using UnityEngine.Rendering.Universal;
+using UnityEngine.Rendering.HighDefinition;
 using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 
 public static class CinematicLook
 {
-    // ---------------------------------------------------------------- tunables
     const string ScenePath = "Assets/Scenes/Corniche.unity";
-    const string PcAssetPath = "Assets/Settings/URP_PC.asset";
-    const string RendererPath = "Assets/Settings/URP_Renderer.asset";
+    const string PostPath = "Assets/Benghazi/PostFX.asset", SkyPath = "Assets/Benghazi/HDRP/SkyAndFog.asset";
+    const int EditorTime = 2;                       // the hour the saved scene (and the editor's review shots) shows: AFTERNOON
 
-    // Supersampling. 1.0 = the game renders at the display resolution (it does NOT render "8K").
-    // 1.25 means 56 % more pixels to shade on top of 4x MSAA: only raise it on a GPU with headroom.
-    const float SupersampleRenderScale = 1.0f;
-
-    // Anti-aliasing: 4x MSAA (geometry edges, and alpha-to-coverage on the palm fronds) + SMAA High (the rest).
-    // TAA is left out on purpose - see the report / the comment in Camera().
-    const int MsaaSamples = 4;
-    const bool UseTaaInstead = false;      // true: MSAA off, camera TAA. Not validated with the view model.
-
-    // Sun shadows for a ~300 m street scene: 4 cascades in a 4096 atlas (2048 each).
-    // Cascade ends at 9 / 27 / 67 / 150 m -> about 1 / 3 / 7 / 15 cm per shadow texel.
+    // Sun shadows for a ~300 m street scene: 4 cascades, ends at 9 / 27 / 67 / 150 m
     const float ShadowDistance = 150f;
     static readonly Vector3 CascadeSplits = new Vector3(0.06f, 0.18f, 0.45f);
-    const float CascadeBorder = 0.15f;
-    const float ShadowDepthBias = 1.0f, ShadowNormalBias = 0.8f;
+    public const float WaterLevel = -0.22f;         // PlayerController.WaterLevel
 
-    // Sun. The direction is kept: LookPro points it at the sun in the photographed sky (48 degrees up),
-    // and moving it would put the shadows at odds with the visible sun. Set > 0 to force an elevation anyway
-    // (the compass direction is kept).
-    static readonly float SunElevationOverrideDeg = 0f;
-    const float SunIntensity = 1.45f;
-    static readonly Color SunColor = new Color(1f, 0.74f, 0.5f);         // sunset: low and orange (the sky photo is a sunset too)
-    const float SunShadowStrength = 0.93f;
-    const float AmbientIntensity = 1.25f;                                  // sky fill: ACES darkens the shade a lot, it needs the light
-
-    // Haze: sky-horizon blue pulled 30 % toward dust, slightly denser (100 m: 10 %, 200 m: 34 %, 300 m: 60 %).
-    // dust in the air of a city at war: warm grey haze (100 m: 15 %, 200 m: 50 %)
-    const float FogDensity = 0.0046f;
-    static readonly Color FogColor = new Color(0.8f, 0.66f, 0.52f);        // golden dust against the low sun
-
-    // Exposure. URP has no auto exposure; this is a fixed offset in stops, applied before ACES.
-    // Worked out for: sunlit pale wall ~0.86, sunlit white ~0.90, wall in shade ~0.55 (display values).
-    const float PostExposure = 0.55f;      // ACES sits about a stop under the untonemapped picture; first seen at -0.3 the shade went black
-
-    // ---------------------------------------------------------------- entry points
     public static void Run()
     {
         try
@@ -79,397 +49,248 @@ public static class CinematicLook
             AssetDatabase.SaveAssets();
             Debug.Log("[cinematic] done - scene and assets saved");
         }
-        catch (Exception e)
-        {
-            Debug.LogException(e);
-            Fail("exception: " + e.Message);
-        }
+        catch (Exception e) { Debug.LogException(e); Fail("exception: " + e.Message); }
     }
 
     // Applies the look to the scene that is open (it must be Corniche) without opening or saving the scene.
-    // Hook for a full rebuild - in LookUpgrade.All, after GameplaySetup.Run() and before SaveScene(scene):
-    //     CinematicLook.Apply();
+    // Called at the end of LookUpgrade.All / War.
     public static bool Apply()
     {
         var scene = SceneManager.GetActiveScene();
         if (scene.path != ScenePath) return Missing($"the open scene is '{scene.path}', expected {ScenePath}");
-
-        // find everything first, so a missing piece stops the run before anything is changed
-        var pc = AssetDatabase.LoadAssetAtPath<UniversalRenderPipelineAsset>(PcAssetPath);
-        if (!pc) return Missing("URP asset " + PcAssetPath);
-        var rendererData = AssetDatabase.LoadAssetAtPath<UniversalRendererData>(RendererPath);
-        if (!rendererData) return Missing("renderer data " + RendererPath);
-        var ssao = rendererData.rendererFeatures.FirstOrDefault(f => f && f.GetType().Name == "ScreenSpaceAmbientOcclusion");
-        if (!ssao) return Missing("the SSAO renderer feature on " + RendererPath + " (LookUpgrade.Run adds it)");
-        var volume = Object.FindObjectsByType<Volume>(FindObjectsInactive.Include).FirstOrDefault(v => v.isGlobal);
-        if (!volume) return Missing("a global Volume in the scene ('Post FX')");
-        var profile = volume.sharedProfile;
-        if (!profile) return Missing("the Volume profile on '" + volume.name + "'");
-        if (!AssetDatabase.Contains(profile)) return Missing("the Volume profile as an asset (it is not saved in the project)");
         var lights = Object.FindObjectsByType<Light>(FindObjectsInactive.Include);
         var sun = RenderSettings.sun && RenderSettings.sun.type == LightType.Directional ? RenderSettings.sun : lights.FirstOrDefault(l => l.type == LightType.Directional);
         if (!sun) return Missing("a directional light (the Sun)");
-        var probe = Object.FindObjectsByType<ReflectionProbe>(FindObjectsInactive.Include).FirstOrDefault();
-        if (!probe) return Missing("the reflection probe ('Environment')");
         var cam = Object.FindObjectsByType<Camera>(FindObjectsInactive.Include).FirstOrDefault(c => c.CompareTag("MainCamera"));
         if (!cam) return Missing("a camera tagged MainCamera");
-        if (!RenderSettings.skybox) return Missing("a skybox material in the scene's lighting settings");
-        var pcLevels = Enumerable.Range(0, QualitySettings.names.Length).Where(i => QualitySettings.GetRenderPipelineAssetAt(i) == pc).ToList();
-        if (pcLevels.Count == 0) return Missing("a quality level that uses " + PcAssetPath);
 
-        Pipeline(pc);
-        Ssao(rendererData, ssao);
-        PostFx(volume, profile);
-        Lighting(sun, lights);
-        Probe(probe);
+        HdrpSetup.Pipeline();
+        HdrpSetup.Templates();
+        if (!AssetDatabase.LoadAssetAtPath<VolumeProfile>($"Assets/Resources/Sky/SkyVol_{TimeOfDay.Presets[EditorTime].name}.asset")) SkySet.Build();
+        HdrpSetup.ConvertAll();
+
+        PostFx();
+        SkyAndFog(sun);
+        Sun(sun);
         MainCamera(cam);
-        Quality(pcLevels);
+        Water();
+        Legacy();
+        Quality();
 
         EditorSceneManager.MarkSceneDirty(scene);
         return true;
     }
 
-    static bool Missing(string what)
+    static bool Missing(string what) { Debug.LogError("[cinematic] MISSING: " + what + " - nothing was changed"); return false; }
+    static void Fail(string why) { Debug.LogError("[cinematic] FAILED: " + why); if (Application.isBatchMode) EditorApplication.Exit(1); }
+
+    // ---------------------------------------------------------------- volumes
+    static Volume GlobalVolume(string name, float priority, VolumeProfile profile)
     {
-        Debug.LogError("[cinematic] MISSING: " + what + " - nothing was changed");
-        return false;
+        var go = GameObject.Find(name) ?? new GameObject(name);
+        var v = go.GetComponent<Volume>() ?? go.AddComponent<Volume>();
+        v.isGlobal = true; v.weight = 1f; v.priority = priority; v.sharedProfile = profile; v.enabled = true;
+        EditorUtility.SetDirty(v);
+        return v;
     }
 
-    static void Fail(string why)
+    // a fresh profile asset: the old one may hold another pipeline's overrides
+    static VolumeProfile FreshProfile(string path)
     {
-        Debug.LogError("[cinematic] FAILED: " + why);
-        if (Application.isBatchMode) EditorApplication.Exit(1);
-    }
-
-    // "name old -> new" for the log
-    static string D(string name, object was, object now) => Equals(was, now) || was.ToString() == now.ToString() ? $"{name} {now} (same)" : $"{name} {was} -> {now}";
-    static string F(float v) => v.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture);
-
-    // ---------------------------------------------------------------- URP asset (PC)
-    static void Pipeline(UniversalRenderPipelineAsset pc)
-    {
-        var log = new List<string>();
-        int msaa = UseTaaInstead ? 1 : MsaaSamples;
-
-        log.Add(D("HDR", pc.supportsHDR, true)); pc.supportsHDR = true;
-        // 32-bit (R11G11B10) stays: the 64-bit buffer doubles the bandwidth of a 4x MSAA target for no visible gain here
-        log.Add(D("HDR precision", pc.hdrColorBufferPrecision, HDRColorBufferPrecision._32Bits)); pc.hdrColorBufferPrecision = HDRColorBufferPrecision._32Bits;
-        log.Add(D("MSAA", pc.msaaSampleCount, msaa)); pc.msaaSampleCount = msaa;
-        log.Add(D("render scale", F(pc.renderScale), F(SupersampleRenderScale))); pc.renderScale = SupersampleRenderScale;
-        pc.upscalingFilter = UpscalingFilterSelection.Auto;
-        // grading in HDR, before the tonemapper: highlights roll off instead of clipping
-        log.Add(D("grading", pc.colorGradingMode, ColorGradingMode.HighDynamicRange)); pc.colorGradingMode = ColorGradingMode.HighDynamicRange;
-        log.Add(D("LUT", pc.colorGradingLutSize, 64)); pc.colorGradingLutSize = 64;       // finer grade steps: no banding in skies and in the night
-        pc.supportsCameraDepthTexture = true;      // the water shader and SSAO read it
-        // no shader here reads _CameraOpaqueTexture (Benghazi/Water does not refract), so no extra full-screen copy
-        log.Add(D("opaque texture", pc.supportsCameraOpaqueTexture, false)); pc.supportsCameraOpaqueTexture = false;
-        Debug.Log("[cinematic] URP_PC quality: " + string.Join(", ", log));
-
-        log.Clear();
-        log.Add(D("atlas", pc.mainLightShadowmapResolution, 4096)); pc.mainLightShadowmapResolution = 4096;
-        log.Add(D("distance", F(pc.shadowDistance), F(ShadowDistance))); pc.shadowDistance = ShadowDistance;
-        log.Add(D("cascades", pc.shadowCascadeCount, 4)); pc.shadowCascadeCount = 4;
-        log.Add(D("splits", pc.cascade4Split.ToString("F3"), CascadeSplits.ToString("F3"))); pc.cascade4Split = CascadeSplits;
-        log.Add(D("border", F(pc.cascadeBorder), F(CascadeBorder))); pc.cascadeBorder = CascadeBorder;
-        log.Add(D("depth bias", F(pc.shadowDepthBias), F(ShadowDepthBias))); pc.shadowDepthBias = ShadowDepthBias;
-        log.Add(D("normal bias", F(pc.shadowNormalBias), F(ShadowNormalBias))); pc.shadowNormalBias = ShadowNormalBias;
-        pc.conservativeEnclosingSphere = true;
-        log.Add(D("extra-light atlas", pc.additionalLightsShadowmapResolution, 2048)); pc.additionalLightsShadowmapResolution = 2048;
-        EditorUtility.SetDirty(pc);
-
-        // these four have no public setter in URP 17.6 (names checked against UniversalRenderPipelineAsset.cs)
-        var so = new SerializedObject(pc);
-        var sq = Find(so, "m_SoftShadowQuality");                                           // enum SoftShadowQuality: 1 Low, 2 Medium, 3 High
-        log.Add(D("soft quality", (SoftShadowQuality)sq.intValue, SoftShadowQuality.High)); sq.intValue = (int)SoftShadowQuality.High;
-        log.Add(SetBool(so, "m_SoftShadowsSupported", true, "soft shadows"));              // was OFF: the hard, blocky shadow edges
-        log.Add(SetBool(so, "m_AdditionalLightShadowsSupported", true, "extra-light shadows"));
-        log.Add(SetBool(so, "m_SupportsLightCookies", false, "light cookies"));           // unused: fewer shader variants
-        so.ApplyModifiedPropertiesWithoutUndo();
-        EditorUtility.SetDirty(pc);
-        Debug.Log("[cinematic] URP_PC shadows: " + string.Join(", ", log));
-    }
-
-    static string SetBool(SerializedObject so, string prop, bool value, string label)
-    {
-        var p = so.FindProperty(prop);
-        if (p == null || p.propertyType != SerializedPropertyType.Boolean)
-            throw new InvalidOperationException($"serialized bool '{prop}' not found on {so.targetObject.name} ({so.targetObject.GetType().Name})");
-        var s = D(label, p.boolValue, value); p.boolValue = value; return s;
-    }
-
-    static SerializedProperty Find(SerializedObject so, string prop)
-    {
-        var p = so.FindProperty(prop);
-        if (p == null) throw new InvalidOperationException($"serialized property '{prop}' not found on {so.targetObject.name} ({so.targetObject.GetType().Name})");
-        return p;
-    }
-
-    // ---------------------------------------------------------------- SSAO (existing feature, settings only)
-    // field names checked against ScreenSpaceAmbientOcclusionSettings in URP 17.6
-    static void Ssao(UniversalRendererData data, ScriptableRendererFeature ssao)
-    {
-        var log = new List<string>();
-        var so = new SerializedObject(ssao);
-        void Int(string n, int v) { var p = Find(so, "m_Settings." + n); log.Add(D(n, p.intValue, v)); p.intValue = v; }
-        void Flt(string n, float v) { var p = Find(so, "m_Settings." + n); log.Add(D(n, F(p.floatValue), F(v))); p.floatValue = v; }
-        void Bool(string n, bool v) { var p = Find(so, "m_Settings." + n); log.Add(D(n, p.boolValue, v)); p.boolValue = v; }
-        Bool("Downsample", false);
-        Bool("AfterOpaque", false);
-        Int("Source", 1);                 // DepthNormals: real normals, no faceting on the boxy buildings
-        Int("Samples", 0);                // High = 12 samples (was Medium, grainy on the white steps)
-        Int("BlurQuality", 0);            // High = bilateral
-        Flt("Intensity", 1.5f);
-        Flt("Radius", 0.7f);
-        Flt("DirectLightingStrength", 0.35f);   // a little contact shadow in direct sun too
-        Flt("Falloff", 120f);
-        so.ApplyModifiedPropertiesWithoutUndo();
-        ssao.SetActive(true);
-        EditorUtility.SetDirty(ssao); EditorUtility.SetDirty(data);
-        Debug.Log("[cinematic] SSAO: " + string.Join(", ", log));
-        // The renderer was saved without its PostProcessData (shaders and textures of the post stack): with
-        // that reference empty URP skips post-processing altogether, whatever the Volume profile says.
-        if (!data.postProcessData)
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        var old = AssetDatabase.LoadAssetAtPath<VolumeProfile>(path);
+        if (old)
         {
-            const string ppPath = "Packages/com.unity.render-pipelines.universal/Runtime/Data/PostProcessData.asset";
-            var pp = AssetDatabase.LoadAssetAtPath<PostProcessData>(ppPath);
-            if (!pp) throw new System.InvalidOperationException("post-process data not found at " + ppPath);
-            data.postProcessData = pp; EditorUtility.SetDirty(data);
-            Debug.Log("[cinematic] renderer: post-process data was missing (post-processing never ran) -> assigned the URP default");
+            foreach (var sub in AssetDatabase.LoadAllAssetsAtPath(path)) if (sub && sub != old) Object.DestroyImmediate(sub, true);
+            old.components.Clear(); EditorUtility.SetDirty(old);
+            return old;                                    // same asset, same GUID: the scene's reference stays valid
         }
-        else Debug.Log("[cinematic] renderer: post-process data present");
+        var p = ScriptableObject.CreateInstance<VolumeProfile>(); AssetDatabase.CreateAsset(p, path); return p;
     }
 
-    // ---------------------------------------------------------------- post-processing
-    static void PostFx(Volume volume, VolumeProfile profile)
+    // an override made with profile.Add<T>() only exists in memory until it is a sub-asset of the profile
+    static void Store(VolumeProfile profile)
     {
-        // 1. repair: drop the empty slots, and store every override inside the asset so a build gets them
-        int empty = profile.components.RemoveAll(c => c == null);
-        int stored = 0;
-        foreach (var c in profile.components) if (Store(c, profile)) stored++;
-        int before = profile.components.Count;
+        foreach (var c in profile.components)
+        {
+            if (!c || AssetDatabase.Contains(c)) continue;
+            c.name = c.GetType().Name; c.hideFlags = HideFlags.HideInInspector | HideFlags.HideInHierarchy;
+            AssetDatabase.AddObjectToAsset(c, profile);
+        }
+        foreach (var c in profile.components) if (c) EditorUtility.SetDirty(c);
+        EditorUtility.SetDirty(profile);
+    }
 
-        var tone = Get<Tonemapping>(profile);
-        // ACES: filmic shoulder and toe; it is what turns the flat, clipped picture into footage
-        tone.mode.Override(TonemappingMode.ACES);
+    // ---------------------------------------------------------------- post-processing and screen-space lighting
+    static void PostFx()
+    {
+        var p = FreshProfile(PostPath);
+        T Add<T>() where T : VolumeComponent { var c = p.Add<T>(false); c.active = true; return c; }
 
-        // warm Mediterranean midday, restrained: slightly under, a little contrast (ACES already adds some),
-        // saturation pulled back so sky and sand stop looking like poster paint
-        var ca = Get<ColorAdjustments>(profile);
-        ca.postExposure.Override(PostExposure);
-        ca.contrast.Override(4f);               // a little more bite than plain ACES: film, not video
-        ca.saturation.Override(-10f);
-        ca.hueShift.Override(0f);
-        ca.colorFilter.Override(new Color(1f, 0.99f, 0.97f));
+        // ACES: filmic shoulder and toe
+        Add<Tonemapping>().mode.Override(TonemappingMode.ACES);
 
-        var wb = Get<WhiteBalance>(profile);
-        wb.temperature.Override(5f);          // warm, short of the old +8 that made the walls too yellow
-        wb.tint.Override(0f);
-
-        // shade takes a trace of the sky, sun keeps a trace of warmth: what daylight does, well short of teal/orange
-        var smh = Get<ShadowsMidtonesHighlights>(profile);
-        // the cinema split: shade a little cool, sunlight a little warm
-        smh.shadows.Override(new Vector4(0.95f, 0.99f, 1.05f, -0.02f));
-        smh.midtones.Override(new Vector4(1f, 1f, 1f, 0f));
-        smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.95f, 0f));
-        smh.shadowsStart.Override(0f); smh.shadowsEnd.Override(0.3f);
-        smh.highlightsStart.Override(0.55f); smh.highlightsEnd.Override(1f);
-
-        // blacks a touch deeper, mids held; neutral in colour
-        var lgg = Get<LiftGammaGain>(profile);
-        lgg.lift.Override(new Vector4(1f, 1f, 1f, 0.012f));        // keep detail in the blacks (gun, gloves, arches)
-        lgg.gamma.Override(new Vector4(1f, 1f, 1f, 0.06f));
-        lgg.gain.Override(new Vector4(1f, 1f, 1f, 0f));
-
-        // hue-vs-saturation: take ~15 % out of sand-yellow (walls, paving) and ~10 % out of sky blue.
-        // 0.5 = unchanged. Skin and wood (hue below 0.07) are outside the dip.
-        var curves = Get<ColorCurves>(profile);
+        // the URP grade, value for value (exposure, saturation and filter belong to the hour: TimeOfDay)
+        var ca = Add<ColorAdjustments>();
+        ca.contrast.Override(4f); ca.hueShift.Override(0f);
+        var wb = Add<WhiteBalance>(); wb.temperature.Override(5f); wb.tint.Override(0f);
+        var smh = Add<ShadowsMidtonesHighlights>();                                   // shade a little cool, sunlight a little warm
+        smh.shadows.Override(new Vector4(0.95f, 0.99f, 1.05f, -0.02f)); smh.midtones.Override(new Vector4(1f, 1f, 1f, 0f)); smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.95f, 0f));
+        smh.shadowsStart.Override(0f); smh.shadowsEnd.Override(0.3f); smh.highlightsStart.Override(0.55f); smh.highlightsEnd.Override(1f);
+        var lgg = Add<LiftGammaGain>();
+        lgg.lift.Override(new Vector4(1f, 1f, 1f, 0.012f)); lgg.gamma.Override(new Vector4(1f, 1f, 1f, 0.06f)); lgg.gain.Override(new Vector4(1f, 1f, 1f, 0f));
+        var curves = Add<ColorCurves>();                                                // ~15 % out of sand-yellow, ~10 % out of sky blue
         curves.hueVsSat.Override(new TextureCurve(new[]
         {
             new Keyframe(0.06f, 0.5f), new Keyframe(0.125f, 0.47f), new Keyframe(0.20f, 0.5f),
             new Keyframe(0.50f, 0.5f), new Keyframe(0.60f, 0.45f), new Keyframe(0.70f, 0.5f),
         }, 0.5f, true, new Vector2(0f, 1f)));
 
-        // bloom only from what is really hot (sky, glints, muzzle flash, white plaster in full sun)
-        var bloom = Get<Bloom>(profile);
-        bloom.threshold.Override(1.3f);       // gamma space: about 1.8 in linear light
-        bloom.intensity.Override(0.28f);
-        bloom.scatter.Override(0.6f);
-        bloom.tint.Override(Color.white);
-        bloom.highQualityFiltering.Override(true);
-        bloom.downscale.Override(BloomDownscaleMode.Half);
-        bloom.maxIterations.Override(6);
-
-        var vig = Get<Vignette>(profile);
-        vig.color.Override(Color.black);
-        vig.center.Override(new Vector2(0.5f, 0.5f));
-        vig.intensity.Override(0.28f);
-        vig.smoothness.Override(0.4f);
-        vig.rounded.Override(false);
-
-        var grain = Get<FilmGrain>(profile);
-        grain.type.Override(FilmGrainLookup.Thin1);
-        grain.intensity.Override(0.22f);
-        grain.response.Override(0.8f);        // grain mostly in shade and midtones, like film
-
-        // light that floods the lens when the sun (or a muzzle flash, a fire) is in the picture: a soft
-        // ghost and a short streak, kept low - it should be felt, not noticed
-        var flare = Get<ScreenSpaceLensFlare>(profile);
+        var bloom = Add<Bloom>();
+        bloom.threshold.Override(1.1f); bloom.intensity.Override(0.16f); bloom.scatter.Override(0.6f); bloom.tint.Override(Color.white);
+        var vig = Add<Vignette>();
+        vig.mode.Override(VignetteMode.Procedural); vig.color.Override(Color.black); vig.intensity.Override(0.28f); vig.smoothness.Override(0.4f); vig.rounded.Override(false);
+        var grain = Add<FilmGrain>(); grain.type.Override(FilmGrainLookup.Thin1); grain.intensity.Override(0.22f); grain.response.Override(0.8f);
+        var flare = Add<ScreenSpaceLensFlare>();
         flare.intensity.Override(0.55f); flare.tintColor.Override(new Color(1f, 0.93f, 0.82f));
         flare.firstFlareIntensity.Override(0.6f); flare.secondaryFlareIntensity.Override(0.35f); flare.warpedFlareIntensity.Override(0.3f);
         flare.streaksIntensity.Override(0.6f); flare.streaksLength.Override(0.45f); flare.streaksThreshold.Override(0.6f);
         flare.vignetteEffect.Override(0.8f); flare.chromaticAbberationIntensity.Override(0.5f);
-        var chroma = Get<ChromaticAberration>(profile);
-        chroma.intensity.Override(0.04f);     // barely there: only the frame corners
+        Add<ChromaticAberration>().intensity.Override(0.04f);
+        // per-object motion vectors: the gun and arms move with the camera, so they stay sharp while the street streaks a little
+        var mb = Add<MotionBlur>();
+        mb.intensity.Override(0.14f); mb.maximumVelocity.Override(60f); mb.minimumVelocity.Override(2f);
+        mb.cameraRotationVelocityClamp.Override(0.03f);
 
-        // CameraAndObjects: the gun and arms get their own motion vectors, and as they move with the camera
-        // their screen velocity is ~0, so they stay sharp while the world streaks a little on fast turns.
-        // (CameraOnly blurs the weapon as if it were part of the street.)
-        var mb = Get<MotionBlur>(profile);
-        mb.mode.Override(MotionBlurMode.CameraAndObjects);
-        mb.quality.Override(MotionBlurQuality.Medium);
-        mb.intensity.Override(0.14f);
-        mb.clamp.Override(0.03f);
+        // ---- what HDRP adds over URP (GraphicsQuality switches these per level at run time)
+        var ao = Add<ScreenSpaceAmbientOcclusion>();
+        ao.intensity.Override(1.5f); ao.radius.Override(1.2f); ao.directLightingStrength.Override(0.3f); ao.temporalAccumulation.Override(true);
+        var ssr = Add<ScreenSpaceReflection>();
+        ssr.enabled.Override(true); ssr.reflectSky.Override(true);
+        var gi = Add<GlobalIllumination>();                 // screen-space bounce light: sunlit ground lights the shaded wall
+        gi.enable.Override(true);
+        var cs = Add<ContactShadows>();
+        cs.enable.Override(true); cs.length.Override(0.12f); cs.maxDistance.Override(60f); cs.fadeDistance.Override(8f); cs.opacity.Override(0.9f);
+        Add<MicroShadowing>().enable.Override(true);
+        var sh = Add<HDShadowSettings>();
+        sh.maxShadowDistance.Override(ShadowDistance); sh.cascadeShadowSplitCount.Override(4);
+        sh.cascadeShadowSplit0.Override(CascadeSplits.x); sh.cascadeShadowSplit1.Override(CascadeSplits.y); sh.cascadeShadowSplit2.Override(CascadeSplits.z);
+        var water = Add<WaterRendering>(); water.enable.Override(true);
 
-        // depth of field belongs to WeaponController.AimFocus (it switches mode and focus distance at run time).
-        // Only make sure the override exists for it to find; an existing one is not touched.
-        bool dofAdded = false;
-        if (!profile.TryGet<DepthOfField>(out var dof))
-        {
-            dof = Get<DepthOfField>(profile); dofAdded = true;
-            dof.mode.Override(DepthOfFieldMode.Off);
-            dof.focalLength.Override(55f); dof.aperture.Override(4f); dof.bladeCount.Override(6);   // LookUpgrade's values
-        }
-        Store(dof, profile);
-
-        volume.isGlobal = true; volume.weight = 1f; volume.enabled = true;
-        foreach (var c in profile.components) EditorUtility.SetDirty(c);
-        EditorUtility.SetDirty(profile); EditorUtility.SetDirty(volume);
-
-        Debug.Log($"[cinematic] post FX profile '{AssetDatabase.GetAssetPath(profile)}': {empty} empty slots removed, {stored} unsaved overrides stored in the asset, " +
-                  $"{profile.components.Count - before} added, {profile.components.Count} total ({string.Join(", ", profile.components.Select(c => c.GetType().Name))})");
-        Debug.Log($"[cinematic] post FX values: ACES, exposure {F(PostExposure)} EV, contrast +4, saturation -10, white balance +5, split cool shade / warm sun, hue-vs-sat dip on sand yellow and sky blue, " +
-                  "bloom 0.28 @ 1.3, vignette 0.28, grain Thin1 0.22, chromatic 0.04, motion blur 0.14 (camera+objects, clamp 0.03), " +
-                  "depth of field " + (dofAdded ? "added (Off, 55 mm f/4) for WeaponController" : "left as it was for WeaponController"));
+        Store(p);
+        GlobalVolume("Post FX", 0, p);
+        Debug.Log($"[cinematic] post FX profile {PostPath}: {string.Join(", ", p.components.Select(c => c.GetType().Name))}");
     }
 
-    static T Get<T>(VolumeProfile profile) where T : VolumeComponent
+    // ---------------------------------------------------------------- sky, fog, exposure: the afternoon, as the game sets it
+    static void SkyAndFog(Light sun)
     {
-        if (!profile.TryGet<T>(out var c)) c = profile.Add<T>(false);
-        c.active = true;
-        Store(c, profile);
-        return c;
+        var preset = TimeOfDay.Presets[EditorTime];
+        var p = FreshProfile(SkyPath);
+        var rig = TimeOfDay.Rig.In(p);
+        Cubemap cube = null;
+        var sp = AssetDatabase.LoadAssetAtPath<VolumeProfile>($"Assets/Resources/Sky/SkyVol_{preset.name}.asset");
+        if (sp && sp.TryGet<HDRISky>(out var hs)) cube = hs.hdriSky.value as Cubemap;
+        if (!cube) Debug.LogWarning("[cinematic] no sky cubemap for " + preset.name + " (run SkySet.Run): the sky will be black in the editor");
+        TimeOfDay.Write(rig, preset, cube, cube ? TimeOfDay.RealSkyExposure[EditorTime] : preset.skyExposure, 1f);
+        rig.fog.enableVolumetricFog.Override(true);
+        Store(p);
+        GlobalVolume("Sky and Fog", 1, p);
+
+        // the sun stands where it is in that sky's photograph
+        var info = AssetDatabase.LoadAssetAtPath<TextAsset>("Assets/Resources/Sky/sky_info.txt");
+        if (info)
+            foreach (var line in info.text.Split('\n'))
+            {
+                var c = line.Trim().Split(';'); if (c.Length < 4 || c[0] != preset.name) continue;
+                float P(string v) => float.Parse(v, CultureInfo.InvariantCulture);
+                var d = new Vector3(P(c[1]), P(c[2]), P(c[3])); if (d.y < 0.1f) { d.y = 0.1f; }
+                sun.transform.rotation = Quaternion.LookRotation(-d.normalized); EditorUtility.SetDirty(sun.transform);
+            }
+        TimeOfDay.WriteSun(sun, preset);
+        // the built-in pipeline's sky and fog are not used by HDRP
+        RenderSettings.fog = false; RenderSettings.skybox = null; RenderSettings.sun = sun;
+        Debug.Log($"[cinematic] sky and fog: {preset.name}, sky {(cube ? cube.name : "none")}, sun {sun.intensity:F2} lux at elevation {Mathf.Asin(Mathf.Clamp(-sun.transform.forward.y, -1, 1)) * Mathf.Rad2Deg:F0} deg, fixed exposure {rig.expo.fixedExposure.value:F2} EV");
     }
 
-    // an override made with profile.Add<T>() only exists in memory until it is a sub-asset of the profile
-    static bool Store(VolumeComponent c, VolumeProfile profile)
+    static void Sun(Light sun)
     {
-        if (AssetDatabase.Contains(c)) return false;
-        c.name = c.GetType().Name;
-        c.hideFlags = HideFlags.HideInInspector | HideFlags.HideInHierarchy;
-        AssetDatabase.AddObjectToAsset(c, profile);
-        return true;
-    }
-
-    // ---------------------------------------------------------------- sun, sky light, haze
-    static void Lighting(Light sun, Light[] all)
-    {
-        var log = new List<string>();
-        var fwd = sun.transform.forward;
-        float elevation = Mathf.Asin(Mathf.Clamp(-fwd.y, -1f, 1f)) * Mathf.Rad2Deg;
-        if (SunElevationOverrideDeg > 0f)
-        {
-            var flat = new Vector3(fwd.x, 0, fwd.z);
-            if (flat.sqrMagnitude < 1e-6f) flat = Vector3.forward;
-            float e = SunElevationOverrideDeg * Mathf.Deg2Rad;
-            sun.transform.rotation = Quaternion.LookRotation(flat.normalized * Mathf.Cos(e) + Vector3.down * Mathf.Sin(e));
-            log.Add(D("elevation", F(elevation), F(SunElevationOverrideDeg)));
-        }
-        else log.Add($"elevation {elevation:F1} deg kept (matches the sun in the sky photo)");
-        log.Add(D("intensity", F(sun.intensity), F(SunIntensity))); sun.intensity = SunIntensity;
-        log.Add(D("colour", sun.color.ToString("F3"), SunColor.ToString("F3"))); sun.color = SunColor;
-        sun.useColorTemperature = false;
-        log.Add(D("shadows", sun.shadows, LightShadows.Soft)); sun.shadows = LightShadows.Soft;
-        log.Add(D("strength", F(sun.shadowStrength), F(SunShadowStrength))); sun.shadowStrength = SunShadowStrength;
-        sun.cookie = null;
-        // bias and softness come from the URP asset, so there is one place to tune them
-        var ld = sun.GetUniversalAdditionalLightData();
-        ld.usePipelineSettings = true;
-        ld.softShadowQuality = SoftShadowQuality.UsePipelineSettings;
-        RenderSettings.sun = sun;
-        EditorUtility.SetDirty(sun); EditorUtility.SetDirty(ld); EditorUtility.SetDirty(sun.transform);
-        Debug.Log($"[cinematic] sun '{sun.name}': {string.Join(", ", log)}; {all.Length - 1} other light(s) in the scene left alone");
-
-        log.Clear();
-        RenderSettings.ambientMode = AmbientMode.Skybox;
-        log.Add(D("ambient", F(RenderSettings.ambientIntensity), F(AmbientIntensity))); RenderSettings.ambientIntensity = AmbientIntensity;
-        log.Add(D("reflections", F(RenderSettings.reflectionIntensity), F(1f))); RenderSettings.reflectionIntensity = 1f;
-        RenderSettings.defaultReflectionMode = DefaultReflectionMode.Skybox;
-        log.Add(D("sky reflection size", RenderSettings.defaultReflectionResolution, 256)); RenderSettings.defaultReflectionResolution = 256;
-        // the sunset photo, warmed and a little darker so the sky glows gold instead of washing out white
-        if (RenderSettings.skybox.HasProperty("_Tint")) RenderSettings.skybox.SetColor("_Tint", new Color(0.6f, 0.49f, 0.4f));
-        if (RenderSettings.skybox.HasProperty("_Exposure")) RenderSettings.skybox.SetFloat("_Exposure", 0.9f);
-        EditorUtility.SetDirty(RenderSettings.skybox);
-        RenderSettings.fog = true;
-        RenderSettings.fogMode = FogMode.ExponentialSquared;
-        log.Add(D("fog density", F(RenderSettings.fogDensity), F(FogDensity))); RenderSettings.fogDensity = FogDensity;
-        log.Add(D("fog colour", RenderSettings.fogColor.ToString("F3"), FogColor.ToString("F3"))); RenderSettings.fogColor = FogColor;
-        DynamicGI.UpdateEnvironment();
-        Debug.Log($"[cinematic] environment (sky '{RenderSettings.skybox.name}' kept): " + string.Join(", ", log));
-    }
-
-    // ---------------------------------------------------------------- reflection probe
-    static void Probe(ReflectionProbe probe)
-    {
-        var log = new List<string>();
-        log.Add(D("resolution", probe.resolution, 512)); probe.resolution = 512;      // rendered once at start (EnvironmentInit): free at run time
-        log.Add(D("HDR", probe.hdr, true)); probe.hdr = true;
-        log.Add(D("intensity", F(probe.intensity), F(1f))); probe.intensity = 1f;
-        EditorUtility.SetDirty(probe);
-        Debug.Log($"[cinematic] reflection probe '{probe.name}': " + string.Join(", ", log));
+        var hd = sun.GetComponent<HDAdditionalLightData>() ?? sun.gameObject.AddComponent<HDAdditionalLightData>();
+        sun.lightUnit = LightUnit.Lux; sun.useColorTemperature = false; sun.shadows = LightShadows.Soft; sun.cookie = null;
+        TimeOfDay.WriteSun(sun, TimeOfDay.Presets[EditorTime]);
+        hd.angularDiameter = 1.2f;                         // a little larger than the real sun: softer shadow edges with distance
+        hd.SetShadowResolutionOverride(false); hd.SetShadowResolutionLevel(2);
+        hd.useContactShadow.useOverride = true; hd.useContactShadow.@override = true;
+        hd.affectsVolumetric = true; hd.volumetricDimmer = 1f; hd.volumetricShadowDimmer = 1f;
+        hd.interactsWithSky = false;                       // the sky is a photograph, the sun is already in it
+        EditorUtility.SetDirty(sun); EditorUtility.SetDirty(hd);
+        foreach (var l in Object.FindObjectsByType<Light>(FindObjectsInactive.Include))
+            if (l != sun && !l.GetComponent<HDAdditionalLightData>()) l.gameObject.AddComponent<HDAdditionalLightData>();
+        Debug.Log($"[cinematic] sun '{sun.name}': HDRP light, lux, soft shadows + contact shadows, sun shafts in the fog");
     }
 
     // ---------------------------------------------------------------- camera
-    // Why not TAA: it needs per-object motion vectors for everything that moves. The muzzle flash, tracers and
-    // red dot use Sprites/Default and Benghazi/Water has only a forward pass - none of them write motion vectors,
-    // so they would ghost or shimmer; the view model's recoil and reload moves are fast and centimetres from the
-    // lens; and the sniper's jump to an 11 degree field of view leaves stale history for a few frames. TAA also
-    // switches MSAA off. MSAA + SMAA has none of these problems and no ghosting. The scope ring and HUD are drawn
-    // with OnGUI after the camera, so neither method touches them.
+    // Temporal anti-aliasing: HDRP writes motion vectors for every lit object (the gun and arms included), so the
+    // objections that kept TAA out of the URP build do not apply; it is also what the upscaler and the
+    // screen-space effects need to be stable.
     static void MainCamera(Camera cam)
     {
-        var log = new List<string>();
-        var data = cam.GetUniversalAdditionalCameraData();
-        var mode = UseTaaInstead ? AntialiasingMode.TemporalAntiAliasing : AntialiasingMode.SubpixelMorphologicalAntiAliasing;
-        log.Add(D("post-processing", data.renderPostProcessing, true)); data.renderPostProcessing = true;
-        log.Add(D("AA", data.antialiasing, mode)); data.antialiasing = mode;
-        log.Add(D("AA quality", data.antialiasingQuality, AntialiasingQuality.High)); data.antialiasingQuality = AntialiasingQuality.High;
-        log.Add(D("dithering", data.dithering, true)); data.dithering = true;       // hides banding in the sky gradient
-        log.Add(D("stop NaN", data.stopNaN, true)); data.stopNaN = true;            // a bad pixel cannot bloom into a black square
-        log.Add(D("allow HDR", cam.allowHDR, true)); cam.allowHDR = true;
-        log.Add(D("allow MSAA", cam.allowMSAA, true)); cam.allowMSAA = true;
+        var data = cam.GetComponent<HDAdditionalCameraData>() ?? cam.gameObject.AddComponent<HDAdditionalCameraData>();
+        data.antialiasing = HDAdditionalCameraData.AntialiasingMode.TemporalAntialiasing;
+        data.TAAQuality = HDAdditionalCameraData.TAAQualityLevel.High;
+        data.taaSharpenStrength = 0.55f; data.taaAntiFlicker = 0.6f; data.taaHistorySharpening = 0.4f;
+        data.dithering = true; data.stopNaNs = true; data.allowDynamicResolution = true;
+        data.clearColorMode = HDAdditionalCameraData.ClearColorMode.Sky;
+        cam.allowHDR = true;
         EditorUtility.SetDirty(cam); EditorUtility.SetDirty(data);
-        Debug.Log($"[cinematic] camera '{cam.name}': " + string.Join(", ", log));
+        Debug.Log($"[cinematic] camera '{cam.name}': TAA high, dithering, stop NaN, dynamic resolution allowed");
     }
 
-    // ---------------------------------------------------------------- QualitySettings (levels on URP_PC only)
-    static void Quality(List<int> levels)
+    // ---------------------------------------------------------------- the sea: HDRP Water System
+    // An ocean surface at the game's water level. It lies under all the land (the ground is above it), so only
+    // real water shows. Calm Mediterranean: a low swell and wind ripples - the player wades and swims at a fixed
+    // level (PlayerController.WaterLevel), so the swell is kept to a few centimetres.
+    static void Water()
+    {
+        var sea = GameObject.Find("Sea");
+        if (sea && sea.TryGetComponent<MeshRenderer>(out var mr)) { mr.enabled = false; mr.sharedMaterial = null; EditorUtility.SetDirty(mr); }      // no reference left to the URP water shader
+        var go = GameObject.Find("Ocean") ?? new GameObject("Ocean");
+        go.transform.SetPositionAndRotation(new Vector3(0, WaterLevel, 0), Quaternion.identity); go.transform.localScale = Vector3.one;
+        var w = go.GetComponent<WaterSurface>() ?? go.AddComponent<WaterSurface>();
+        w.surfaceType = WaterSurfaceType.OceanSeaLake; w.geometryType = WaterGeometryType.Infinite;
+        w.timeMultiplier = 1f; w.scriptInteractions = false;
+        // swell + ripples
+        w.repetitionSize = 120f; w.largeWindSpeed = 9f; w.largeChaos = 0.85f; w.largeOrientationValue = 200f;
+        w.largeBand0Multiplier = 0.55f; w.largeBand1Multiplier = 0.8f;
+        w.ripples = true; w.ripplesWindSpeed = 7f; w.ripplesChaos = 0.9f;
+        // colour: clear turquoise in the shallows going to deep blue (refraction with absorption, scattering in the body)
+        w.refractionColor = new Color(0.16f, 0.5f, 0.5f); w.maxRefractionDistance = 0.6f; w.absorptionDistance = 6f;
+        w.scatteringColor = new Color(0.0f, 0.2f, 0.25f); w.ambientScattering = 0.25f; w.heightScattering = 0.2f; w.displacementScattering = 0.25f;
+        w.directLightTipScattering = 0.5f; w.directLightBodyScattering = 0.4f;
+        w.startSmoothness = 0.95f; w.endSmoothness = 0.85f; w.smoothnessFadeStart = 100f; w.smoothnessFadeDistance = 500f;
+        w.tessellation = true; w.maxTessellationFactor = 2f;
+        w.foam = true; w.simulationFoamAmount = 0.25f; w.foamTextureTiling = 0.2f;
+        w.caustics = true; w.causticsIntensity = 0.4f; w.causticsPlaneBlendDistance = 2f; w.virtualPlaneDistance = 3f;
+        w.underWater = true; w.volumeBounds = null; w.volumeDepth = 40f;
+        EditorUtility.SetDirty(w);
+        Debug.Log($"[cinematic] sea: HDRP ocean at y {WaterLevel}, the old water mesh is switched off");
+    }
+
+    // things only the built-in / URP renderers used
+    static void Legacy()
+    {
+        var env = GameObject.Find("Environment");
+        if (env) { Object.DestroyImmediate(env); Debug.Log("[cinematic] the sky-only reflection probe is gone: HDRP reflects the sky by itself"); }
+    }
+
+    static void Quality()
     {
         int keep = QualitySettings.GetQualityLevel();
-        int msaa = UseTaaInstead ? 0 : MsaaSamples;
-        var names = QualitySettings.names;
-        foreach (int i in levels)
+        for (int i = 0; i < QualitySettings.names.Length; i++)
         {
             QualitySettings.SetQualityLevel(i, false);
-            var log = new List<string>();
-            log.Add(D("anisotropic", QualitySettings.anisotropicFiltering, AnisotropicFiltering.ForceEnable)); QualitySettings.anisotropicFiltering = AnisotropicFiltering.ForceEnable;
-            log.Add(D("MSAA", QualitySettings.antiAliasing, msaa)); QualitySettings.antiAliasing = msaa;      // URP overwrites this from the asset at run time; kept equal
-            log.Add(D("mip limit", QualitySettings.globalTextureMipmapLimit, 0)); QualitySettings.globalTextureMipmapLimit = 0;
-            log.Add(D("LOD bias", F(QualitySettings.lodBias), F(2f))); QualitySettings.lodBias = 2f;
-            QualitySettings.maximumLODLevel = 0;
-            log.Add(D("vSync", QualitySettings.vSyncCount, 1)); QualitySettings.vSyncCount = 1;
-            log.Add(D("soft particles", QualitySettings.softParticles, true)); QualitySettings.softParticles = true;
-            log.Add(D("realtime probes", QualitySettings.realtimeReflectionProbes, true)); QualitySettings.realtimeReflectionProbes = true;
-            Debug.Log($"[cinematic] quality level {i} '{names[i]}': " + string.Join(", ", log));
+            QualitySettings.anisotropicFiltering = AnisotropicFiltering.ForceEnable; QualitySettings.globalTextureMipmapLimit = 0;
+            QualitySettings.lodBias = 2f; QualitySettings.maximumLODLevel = 0; QualitySettings.vSyncCount = 1;
         }
         QualitySettings.SetQualityLevel(keep, false);
     }

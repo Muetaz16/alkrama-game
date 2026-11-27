@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
-using UnityEngine.Rendering.Universal;
+using UnityEngine.Rendering.HighDefinition;
 
 // The hour the fight happens at: dawn, noon, afternoon, sunset, midnight.
 //   T            next time of day (it changes over a couple of seconds)
@@ -10,8 +10,14 @@ using UnityEngine.Rendering.Universal;
 // Each time has its own photographed sky (Resources/Sky, made by the editor's SkySet from Poly Haven HDRIs)
 // and sets the sun or the moon to where it stands in that photograph, with its colour and strength, the
 // sky light, the haze, and the exposure and tint of the picture. Changing time dims the sky, swaps it and
-// brings it back up. Without the sky set it falls back to tinting the scene's one sky. Starts itself; nothing in the scene refers to it.
+// brings it back up. Starts itself; nothing in the scene refers to it.
 // The game also opens full screen at the monitor's own resolution unless a -screen-... option says otherwise.
+//
+// HDRP: the sky is an HDRI Sky in a global volume of its own (priority 40), with the fog, the fixed exposure and
+// the sky-light multipliers beside it; the sky's light and reflections follow the sky by themselves.
+// The numbers in the presets are the URP ones and mean the same: the exposure is fixed so that a camera
+// exposure of 0 leaves scene light at 1:1 (ExposureBase), the sun's lux is its old strength x pi (a white
+// wall then returns what it did), and a sky "exposure" is a plain multiplier on the photograph.
 public class TimeOfDay : MonoBehaviour
 {
     public struct Preset
@@ -35,17 +41,63 @@ public class TimeOfDay : MonoBehaviour
         new Preset { name = "MIDNIGHT", clock = "00:10", elevation = 42, bearing = 130, sun = new Color(0.56f, 0.66f, 0.92f), sunPower = 0.42f, shadow = 0.75f,
             sky = new Color(0.07f, 0.09f, 0.16f), skyExposure = 0.6f, skyLight = 2.2f, haze = new Color(0.04f, 0.055f, 0.09f), hazeDensity = 0.0038f, exposure = 0.9f, saturation = -30, filter = new Color(0.8f, 0.88f, 1f) },
     };
+    // how bright each photographed sky is shown (the "night" photograph is a moonlit one, far brighter than the game's night: taken well down)
+    public static readonly float[] RealSkyExposure = { 0.8f, 0.85f, 0.9f, 1.0f, 0.13f };
+
+    // ---- HDRP scale (see the header)
+    public const float ExposureBase = -0.263f;        // EV100 at which HDRP's exposure multiplier is exactly 1
+    public const float SunLux = Mathf.PI;             // lux per unit of the old directional-light strength
+    public const float FogTop = 140f;                 // the haze thins out above the roofs (m)
 
     public static int Current { get; private set; } = 2;
     public static string Name => Presets[Current].name;
     static TimeOfDay inst;
 
-    Light sun; float baseBearing; Material sky; Volume volume; ColorAdjustments grade; ReflectionProbe probe;
-    Preset from, now, to; float blend = 1, labelUntil, lastEnv; GUIStyle style;
-    readonly Material[] skies = new Material[5]; readonly Vector3[] lightDir = new Vector3[5]; readonly bool[] hasDir = new bool[5];
+    /// <summary>The components one time of day is written into (a volume profile holds them).</summary>
+    public class Rig
+    {
+        public VisualEnvironment env; public HDRISky hdri; public Fog fog; public Exposure expo; public IndirectLightingController ilc; public ColorAdjustments grade;
+        public static Rig In(VolumeProfile p)
+        {
+            T Get<T>() where T : VolumeComponent => p.TryGet<T>(out var c) ? c : p.Add<T>(true);
+            return new Rig { env = Get<VisualEnvironment>(), hdri = Get<HDRISky>(), fog = Get<Fog>(), expo = Get<Exposure>(), ilc = Get<IndirectLightingController>(), grade = Get<ColorAdjustments>() };
+        }
+    }
+
+    /// <summary>Writes a time of day into a rig. cube = that time's sky (null keeps whatever sky the rig has), dip = 0..1 sky brightness during a change.</summary>
+    public static void Write(Rig r, Preset p, Cubemap cube, float skyMul, float dip)
+    {
+        r.env.skyType.Override((int)SkyType.HDRI); r.env.skyAmbientMode.Override(SkyAmbientMode.Dynamic);
+        if (cube) r.hdri.hdriSky.Override(cube);
+        r.hdri.skyIntensityMode.Override(SkyIntensityMode.Multiplier);
+        r.hdri.multiplier.Override(Mathf.Max(0.0001f, skyMul * dip)); r.hdri.exposure.Override(0f); r.hdri.rotation.Override(0f);
+        r.hdri.updateMode.Override(EnvironmentUpdateMode.OnChanged);
+
+        // haze. URP's fog was exp(-(d z)^2); HDRP's is exp(-z / meanFreePath). They agree at 150 m with meanFreePath = 1 / (d^2 * 150).
+        r.fog.enabled.Override(true);
+        r.fog.colorMode.Override(FogColorMode.ConstantColor); r.fog.color.Override(p.haze); r.fog.tint.Override(Color.white);
+        r.fog.meanFreePath.Override(Mathf.Clamp(1f / (p.hazeDensity * p.hazeDensity * 150f), 40f, 4000f));
+        r.fog.baseHeight.Override(-2f); r.fog.maximumHeight.Override(FogTop); r.fog.maxFogDistance.Override(4000f);
+        float hm = Mathf.Max(p.haze.r, p.haze.g, p.haze.b, 0.001f);
+        r.fog.albedo.Override(new Color(p.haze.r / hm, p.haze.g / hm, p.haze.b / hm) * 0.9f);       // what the sun shafts are made of (volumetric fog)
+        r.fog.anisotropy.Override(0.55f); r.fog.globalLightProbeDimmer.Override(0.8f);
+
+        r.expo.mode.Override(ExposureMode.Fixed); r.expo.fixedExposure.Override(ExposureBase - p.exposure);
+        r.ilc.indirectDiffuseLightingMultiplier.Override(p.skyLight); r.ilc.reflectionLightingMultiplier.Override(Mathf.Clamp01(p.skyLight));
+        r.grade.saturation.Override(p.saturation); r.grade.colorFilter.Override(p.filter);
+    }
+
+    /// <summary>Sun (or moon) for a time of day.</summary>
+    public static void WriteSun(Light sun, Preset p)
+    {
+        sun.color = p.sun; sun.intensity = p.sunPower * SunLux;
+        if (sun.TryGetComponent<HDAdditionalLightData>(out var hd)) hd.shadowDimmer = p.shadow;
+    }
+
+    Light sun; float baseBearing; Volume volume; Rig rig;
+    Preset from, now, to; float blend = 1, labelUntil; GUIStyle style;
+    readonly Cubemap[] skies = new Cubemap[5]; readonly Vector3[] lightDir = new Vector3[5]; readonly bool[] hasDir = new bool[5];
     Vector3 dirFrom, dirTo; int skyShown = -1;
-    // how bright each photographed sky is shown (the night one is a real night: it needs lifting to be seen at all)
-    static readonly float[] RealSkyExposure = { 0.8f, 0.85f, 0.9f, 1.0f, 0.13f };   // the "night" photograph is a moonlit one, far brighter than the game's night: taken well down
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     static void FullScreen()
@@ -69,17 +121,17 @@ public class TimeOfDay : MonoBehaviour
         if (!sun) foreach (var l in FindObjectsByType<Light>(FindObjectsInactive.Exclude)) if (l.type == LightType.Directional) { sun = l; break; }
         if (!sun) { enabled = false; return; }
         var f = sun.transform.forward; baseBearing = Mathf.Atan2(-f.x, -f.z) * Mathf.Rad2Deg;      // where the scene's own sun stands
-        if (RenderSettings.skybox) { sky = new Material(RenderSettings.skybox); RenderSettings.skybox = sky; }
-        probe = FindFirstObjectByType<ReflectionProbe>();
         var vg = new GameObject("Time volume"); vg.transform.SetParent(transform, false);
         volume = vg.AddComponent<Volume>(); volume.isGlobal = true; volume.priority = 40;
-        var prof = ScriptableObject.CreateInstance<VolumeProfile>(); grade = prof.Add<ColorAdjustments>(true);
-        grade.postExposure.overrideState = true; grade.saturation.overrideState = true; grade.colorFilter.overrideState = true;
-        volume.profile = prof;
+        var prof = ScriptableObject.CreateInstance<VolumeProfile>(); rig = Rig.In(prof); volume.profile = prof;
 
         // the photographed skies, and where the light is in each
         var info = Resources.Load<TextAsset>("Sky/sky_info");
-        for (int i = 0; i < Presets.Length; i++) { var m = Resources.Load<Material>("Sky/Sky_" + Presets[i].name); if (m) skies[i] = new Material(m); }
+        for (int i = 0; i < Presets.Length; i++)
+        {
+            var sp = Resources.Load<VolumeProfile>("Sky/SkyVol_" + Presets[i].name);
+            if (sp && sp.TryGet<HDRISky>(out var hs)) skies[i] = hs.hdriSky.value as Cubemap;
+        }
         if (info)
             foreach (var line in info.text.Split('\n'))
             {
@@ -92,7 +144,7 @@ public class TimeOfDay : MonoBehaviour
             }
         int start = 2; var a = System.Environment.GetCommandLineArgs();
         for (int i = 0; i < a.Length - 1; i++) if (a[i] == "-time") { int k = Find(a[i + 1]); if (k >= 0) start = k; }
-        Current = start; now = to = from = Presets[start]; dirFrom = dirTo = Dir(start); ShowSky(start); Apply(now); Environment();
+        Current = start; now = to = from = Presets[start]; dirFrom = dirTo = Dir(start); skyShown = start; Apply(now);
     }
 
     static int Find(string s)
@@ -109,7 +161,7 @@ public class TimeOfDay : MonoBehaviour
         index = ((index % Presets.Length) + Presets.Length) % Presets.Length;
         inst.dirFrom = inst.CurrentDir(); inst.dirTo = inst.Dir(index);
         Current = index; inst.from = inst.now; inst.to = Presets[index]; inst.blend = instant ? 1 : 0; inst.labelUntil = Time.time + 3f;
-        if (instant) { inst.now = inst.to; inst.ShowSky(index); inst.Apply(inst.now); inst.Environment(); }
+        if (instant) { inst.now = inst.to; inst.skyShown = index; inst.Apply(inst.now); }
     }
 
     void Update()
@@ -125,9 +177,8 @@ public class TimeOfDay : MonoBehaviour
         if (blend < 1)
         {
             blend = Mathf.Min(1, blend + Time.deltaTime / 2.5f);
-            if (blend >= 0.5f && skyShown != Current) ShowSky(Current);
+            if (blend >= 0.5f && skyShown != Current) skyShown = Current;
             now = Mix(from, to, Mathf.SmoothStep(0, 1, blend)); Apply(now);
-            if (Time.time - lastEnv > 0.25f || blend >= 1) Environment();
         }
     }
     WeaponController weapon;
@@ -150,35 +201,15 @@ public class TimeOfDay : MonoBehaviour
         return new Vector3(Mathf.Sin(b) * Mathf.Cos(e), Mathf.Sin(e), Mathf.Cos(b) * Mathf.Cos(e));
     }
     Vector3 CurrentDir() => sun ? -sun.transform.forward : Vector3.up;
-    void ShowSky(int i)
-    {
-        skyShown = i;
-        if (skies[i]) { sky = skies[i]; RenderSettings.skybox = sky; }
-    }
 
     void Apply(Preset p)
     {
         var toSun = Vector3.Slerp(dirFrom, dirTo, Mathf.SmoothStep(0, 1, blend)).normalized;
         sun.transform.rotation = Quaternion.LookRotation(-toSun);
-        sun.color = p.sun; sun.intensity = p.sunPower; sun.shadowStrength = p.shadow;
-        bool real = skyShown >= 0 && skies[skyShown];
+        WriteSun(sun, p);
         float dip = blend < 1 ? Mathf.Lerp(0.12f, 1f, Mathf.Abs(2 * blend - 1)) : 1f;        // down, swap, up
-        if (sky)
-        {
-            if (sky.HasProperty("_Tint")) sky.SetColor("_Tint", real ? new Color(0.5f, 0.5f, 0.5f) : p.sky);
-            if (sky.HasProperty("_Exposure")) sky.SetFloat("_Exposure", (real ? RealSkyExposure[skyShown] : p.skyExposure) * dip);
-        }
-        RenderSettings.ambientIntensity = p.skyLight; RenderSettings.reflectionIntensity = Mathf.Clamp01(p.skyLight);
-        RenderSettings.fogColor = p.haze; RenderSettings.fogDensity = p.hazeDensity;
-        grade.postExposure.value = p.exposure; grade.saturation.value = p.saturation; grade.colorFilter.value = p.filter;
-    }
-
-    // the sky's own light and the reflections are worked out from the sky: do it again when the sky has changed
-    void Environment()
-    {
-        lastEnv = Time.time;
-        DynamicGI.UpdateEnvironment();
-        if (probe && probe.mode == ReflectionProbeMode.Realtime) probe.RenderProbe();
+        var cube = skyShown >= 0 ? skies[skyShown] : null;
+        Write(rig, p, cube, cube ? RealSkyExposure[skyShown] : p.skyExposure, dip);
     }
 
     void OnGUI()

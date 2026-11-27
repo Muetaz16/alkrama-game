@@ -7,7 +7,6 @@ using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.SceneManagement;
 using UnityEngine;
-using UnityEngine.Rendering.Universal;
 
 public static class SoldierSetup
 {
@@ -26,6 +25,7 @@ public static class SoldierSetup
         var prefab = BuildPrefab(controller);
         BuildEnemyPrefab(BuildEnemyController());
         PlaceInScene(prefab);
+        HdrpSetup.ConvertAll();
         AssetDatabase.SaveAssets();
         Debug.Log("[soldier] setup done");
     }
@@ -296,7 +296,7 @@ public static class SoldierSetup
 
     public static void BuildWindows()
     {
-        var outPath = Path.GetFullPath("../builds/win/Benghazi.exe");
+        var outPath = Path.Combine(HdrpSetup.BuildDir(), "Benghazi.exe");       // builds/win-hdrp beside the repository: never the URP build's folder
         PlayerSettings.runInBackground = true;      // keep playing (and testing) when the window loses focus
         var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
         {

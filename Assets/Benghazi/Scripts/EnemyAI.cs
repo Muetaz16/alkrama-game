@@ -809,7 +809,7 @@ public class EnemyGrenade : MonoBehaviour
     {
         var go = GameObject.CreatePrimitive(PrimitiveType.Sphere); go.name = "Grenade"; go.layer = 2;
         go.transform.position = from; go.transform.localScale = Vector3.one * 0.12f;
-        var mr = go.GetComponent<MeshRenderer>(); mr.material = new Material(Shader.Find("Universal Render Pipeline/Lit")); mr.material.SetColor("_BaseColor", new Color(0.24f, 0.27f, 0.17f));
+        var mr = go.GetComponent<MeshRenderer>(); mr.material = Rp.Lit("Grenade", new Color(0.24f, 0.27f, 0.17f));
         if (thrower) Physics.IgnoreCollision(go.GetComponent<Collider>(), thrower);
         var rb = go.AddComponent<Rigidbody>(); rb.mass = 0.4f; rb.linearDamping = 0.05f; rb.angularDamping = 0.5f; rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
         float d = Vector3.Distance(new Vector3(from.x, 0, from.z), new Vector3(to.x, 0, to.z));

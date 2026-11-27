@@ -77,8 +77,8 @@ public static class CarDamage
         for (int s = 0; s < mesh.subMeshCount; s++) { var sm = mesh.GetSubMesh(s); if (idx >= sm.indexStart && idx < sm.indexStart + sm.indexCount) { sub = s; break; } }
         tmpMats.Clear(); r.GetSharedMaterials(tmpMats);
         var mat = sub < tmpMats.Count ? tmpMats[sub] : null; tmpMats.Clear();
-        if (!mat || !mat.name.StartsWith("Facade") || !mat.HasProperty("_MetallicGlossMap")) { LastBuildingProbe = "not a facade"; return false; }
-        var mask = mat.GetTexture("_MetallicGlossMap") as Texture2D;
+        if (!mat || !mat.name.StartsWith("Facade") || !mat.HasProperty("_MaskMap")) { LastBuildingProbe = "not a facade"; return false; }
+        var mask = mat.GetTexture("_MaskMap") as Texture2D;
         if (!mask) { LastBuildingProbe = "facade without a glass mask"; return false; }
         if (!mask.isReadable) { LastBuildingProbe = "glass mask not readable (run GlassSetup.Run)"; return false; }
         if (!mesh.isReadable) { LastBuildingProbe = "building mesh not readable"; return false; }
