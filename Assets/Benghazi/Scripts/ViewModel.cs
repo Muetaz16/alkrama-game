@@ -947,7 +947,7 @@ public class ViewModel : MonoBehaviour
     Transform BuildFlash(Transform at)
     {
         var g = new GameObject("Flash").transform; g.SetParent(at, false);
-        var mat = new Material(Shader.Find("Sprites/Default")) { mainTexture = FlashTex(128) };
+        var mat = new Material(Rp.Fx) { mainTexture = FlashTex(128) };
         var quad = GameObject.CreatePrimitive(PrimitiveType.Quad); var qm = quad.GetComponent<MeshFilter>().sharedMesh; Destroy(quad);
         void Q(Vector3 p, Vector3 e, Vector3 s)
         {

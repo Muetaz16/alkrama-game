@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 // The air of the city after the fighting, all made in code at start (no textures or effects in the project):
 //   dust      fine motes hanging in the light round the player, drifting with the wind
@@ -19,7 +19,7 @@ public class Atmosphere : MonoBehaviour
 
     void Start()
     {
-        var shader = Shader.Find("Sprites/Default");
+        var shader = Rp.Fx;
         if (!shader) { enabled = false; return; }
         var soft = Soft(64); var puff = Puff(128);
         softMat = new Material(shader) { mainTexture = soft };

@@ -252,7 +252,7 @@ public static class CarDamage
     {
         if (quad) return;
         var prim = GameObject.CreatePrimitive(PrimitiveType.Quad); quad = prim.GetComponent<MeshFilter>().sharedMesh; Object.Destroy(prim);
-        var sh = Shader.Find("Sprites/Default");
+        var sh = Rp.Fx;
         holeMat = new Material(sh) { name = "Car bullet hole", mainTexture = HoleTex(128) };
         crackMat = new Material(sh) { name = "Car glass crack", mainTexture = CrackTex(512) };
         brokenMat = new Material(sh) { name = "Car pane broken out", mainTexture = BrokenTex(256) };

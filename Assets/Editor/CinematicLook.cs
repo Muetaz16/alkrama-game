@@ -44,6 +44,7 @@ public static class CinematicLook
         try
         {
             var scene = EditorSceneManager.OpenScene(ScenePath, OpenSceneMode.Single);
+            HdrpSetup.BeginUrp();          // so a change to the conversion rules reaches the materials already converted
             if (!Apply()) { Fail("nothing was saved"); return; }
             if (!EditorSceneManager.SaveScene(scene)) { Fail("could not save " + ScenePath); return; }
             AssetDatabase.SaveAssets();
@@ -132,7 +133,7 @@ public static class CinematicLook
 
         // the URP grade, value for value (exposure, saturation and filter belong to the hour: TimeOfDay)
         var ca = Add<ColorAdjustments>();
-        ca.contrast.Override(4f); ca.hueShift.Override(0f);
+        ca.contrast.Override(10f); ca.hueShift.Override(0f);
         var wb = Add<WhiteBalance>(); wb.temperature.Override(5f); wb.tint.Override(0f);
         var smh = Add<ShadowsMidtonesHighlights>();                                   // shade a little cool, sunlight a little warm
         smh.shadows.Override(new Vector4(0.95f, 0.99f, 1.05f, -0.02f)); smh.midtones.Override(new Vector4(1f, 1f, 1f, 0f)); smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.95f, 0f));
@@ -264,8 +265,8 @@ public static class CinematicLook
         w.largeBand0Multiplier = 0.55f; w.largeBand1Multiplier = 0.8f;
         w.ripples = true; w.ripplesWindSpeed = 7f; w.ripplesChaos = 0.9f;
         // colour: clear turquoise in the shallows going to deep blue (refraction with absorption, scattering in the body)
-        w.refractionColor = new Color(0.16f, 0.5f, 0.5f); w.maxRefractionDistance = 0.6f; w.absorptionDistance = 6f;
-        w.scatteringColor = new Color(0.0f, 0.2f, 0.25f); w.ambientScattering = 0.25f; w.heightScattering = 0.2f; w.displacementScattering = 0.25f;
+        w.refractionColor = new Color(0.12f, 0.55f, 0.6f); w.maxRefractionDistance = 0.6f; w.absorptionDistance = 7f;
+        w.scatteringColor = new Color(0.0f, 0.3f, 0.42f); w.ambientScattering = 0.45f; w.heightScattering = 0.2f; w.displacementScattering = 0.25f;
         w.directLightTipScattering = 0.5f; w.directLightBodyScattering = 0.4f;
         w.startSmoothness = 0.95f; w.endSmoothness = 0.85f; w.smoothnessFadeStart = 100f; w.smoothnessFadeDistance = 500f;
         w.tessellation = true; w.maxTessellationFactor = 2f;

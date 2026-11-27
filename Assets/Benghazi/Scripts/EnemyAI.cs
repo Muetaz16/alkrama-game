@@ -138,7 +138,7 @@ public class EnemyAI : Damageable
         {
             var q = GameObject.CreatePrimitive(PrimitiveType.Quad); Destroy(q.GetComponent<Collider>());
             q.name = "Flash"; flash = q.transform; flash.SetParent(muzzle, false); flash.localScale = Vector3.one * 0.32f;
-            var mr = q.GetComponent<MeshRenderer>(); mr.material = new Material(Shader.Find("Sprites/Default")) { mainTexture = flashTex };
+            var mr = q.GetComponent<MeshRenderer>(); mr.material = new Material(Rp.Fx) { mainTexture = flashTex };
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             var fl = q.AddComponent<Light>(); fl.type = LightType.Point; fl.range = 5; fl.intensity = 4; fl.color = new Color(1f, 0.75f, 0.4f);
             q.SetActive(false);

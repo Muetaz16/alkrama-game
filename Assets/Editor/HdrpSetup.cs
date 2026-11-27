@@ -93,7 +93,7 @@ public static class HdrpSetup
         s.hdShadowInitParams = sh;
         // the picture can be drawn smaller and scaled up with the temporal upscaler (GraphicsQuality sets the percentage)
         var dr = s.dynamicResolutionSettings;
-        dr.enabled = true; dr.dynResType = DynamicResolutionType.Hardware; dr.upsampleFilter = DynamicResUpscaleFilter.TAAU;
+        dr.enabled = true; dr.dynResType = DynamicResolutionType.Software;     // hardware scaling on D3D12 is a known source of device hangs dr.upsampleFilter = DynamicResUpscaleFilter.TAAU;
         dr.minPercentage = 50; dr.maxPercentage = 100; dr.forceResolution = false; dr.useMipBias = true;
         s.dynamicResolutionSettings = dr;
         asset.currentPlatformRenderPipelineSettings = s;
@@ -142,12 +142,13 @@ public static class HdrpSetup
             string path = $"{Templates_}/{name}.mat";
             var m = AssetDatabase.LoadAssetAtPath<Material>(path);
             if (!m) { m = new Material(Shader.Find(shader)); AssetDatabase.CreateAsset(m, path); }
-            m.shader = Shader.Find(shader); set(m); HDMaterial.ValidateMaterial(m); EditorUtility.SetDirty(m);
+            m.shader = Shader.Find(shader); set(m); if (shader.StartsWith("HDRP/")) HDMaterial.ValidateMaterial(m); EditorUtility.SetDirty(m);
             return m;
         }
         Make("Lit", HdLit, m => { m.SetTexture("_BaseColorMap", white); });
         Make("LitPbr", HdLit, m => { m.SetTexture("_BaseColorMap", white); m.SetTexture("_NormalMap", flat); m.SetTexture("_MaskMap", mask); });
-        Make("LitCutout", HdLit, m => { m.SetTexture("_BaseColorMap", white); m.SetFloat("_AlphaCutoffEnable", 1); m.SetFloat("_AlphaCutoff", 0.5f); m.SetFloat("_DoubleSidedEnable", 1); });
+        Make("LitCutout", HdLit, m => { m.SetTexture("_BaseColorMap", white); m.SetFloat("_AlphaCutoffEnable", 1); m.SetFloat("_AlphaCutoff", 0.5f); m.SetFloat("_DoubleSidedEnable", 1); m.SetFloat("_DoubleSidedNormalMode", 2); });
+        Make("Fx", "Benghazi/Fx", m => { });
         Make("Decal", "HDRP/Decal", m =>
         {
             m.SetTexture("_BaseColorMap", white); m.SetFloat("_AffectAlbedo", 1); m.SetFloat("_AffectNormal", 0); m.SetFloat("_AffectMetal", 0);
@@ -260,7 +261,9 @@ public static class HdrpSetup
         }
         else m.SetTexture("_DetailMap", null);
         m.SetFloat("_AlphaCutoffEnable", clip ? 1 : 0); m.SetFloat("_AlphaCutoff", cutoff);
-        m.SetFloat("_DoubleSidedEnable", twoSided ? 1 : 0); m.SetFloat("_DoubleSidedNormalMode", 1);       // mirror: the back face is lit as a back face
+        m.SetFloat("_DoubleSidedEnable", twoSided ? 1 : 0); m.SetFloat("_DoubleSidedNormalMode", 2);
+        // ^ None: a back face is lit with the normal the mesh has, as URP does. The web export's floors are wound
+        //   facing down with their normals up - flipped or mirrored they would get no sun at all.
         m.SetFloat("_SurfaceType", transparent ? 1 : 0); m.SetFloat("_BlendMode", 0);
         if (transparent) { m.SetFloat("_TransparentZWrite", 0); m.SetFloat("_EnableFogOnTransparent", 1); }
         m.SetFloat("_SupportDecals", 1); m.SetFloat("_ReceivesSSR", 1);
@@ -339,5 +342,26 @@ public static class HdrpSetup
         ti.textureType = TextureImporterType.Default; ti.sRGBTexture = false; ti.alphaIsTransparency = false; ti.alphaSource = TextureImporterAlphaSource.FromInput;
         ti.wrapMode = TextureWrapMode.Repeat; ti.mipmapEnabled = true; ti.anisoLevel = 4; ti.isReadable = readable;
         ti.SaveAndReimport();
+    }
+}
+
+// Models imported "via material description" (the Mixamo soldier) get whatever the file says, and the soldier's
+// second body material comes in with a white emissive colour: under HDRP that is a glowing white sleeve.
+// Nothing in this game's models is meant to glow, so imported model materials never emit.
+class HdrpModelMaterials : AssetPostprocessor
+{
+    public override uint GetVersion() => 3;
+    public override int GetPostprocessOrder() => 1000;          // after HDRP's own material-description importer
+    // the whole model is done here: every material the import made is final
+    void OnPostprocessModel(GameObject root)
+    {
+        foreach (var r in root.GetComponentsInChildren<Renderer>(true))
+            foreach (var m in r.sharedMaterials)
+            {
+                if (!m || !m.shader || m.shader.name != "HDRP/Lit") continue;
+                m.SetColor("_EmissiveColor", Color.black); m.SetColor("_EmissiveColorLDR", Color.black); m.SetColor("_EmissiveColorHDR", Color.black);
+                m.globalIlluminationFlags = MaterialGlobalIlluminationFlags.EmissiveIsBlack;
+                HDMaterial.ValidateMaterial(m);
+            }
     }
 }

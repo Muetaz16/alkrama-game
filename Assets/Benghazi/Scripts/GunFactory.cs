@@ -82,7 +82,7 @@ public static class GunFactory
         glass = Lit(new Color(0.05f, 0.09f, 0.12f), 0.6f, 0.97f, null, "Glass");
         blade = Lit(new Color(0.52f, 0.53f, 0.55f), 1f, 0.62f, noise, "Blade");
         edge = Lit(new Color(0.85f, 0.86f, 0.88f), 1f, 0.85f, null, "Edge");
-        dot = new Material(Shader.Find("Sprites/Default")) { name = "RedDot", mainTexture = Dot(64) };
+        dot = new Material(Rp.Fx) { name = "RedDot", mainTexture = Dot(64) };
     }
 
     // =====================================================================================================

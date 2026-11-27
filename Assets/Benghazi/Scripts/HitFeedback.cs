@@ -77,7 +77,7 @@ public class HitFeedback : MonoBehaviour
         splatTex = Blot(256, 5, new Color(0.26f, 0.004f, 0.004f), 0.2f);     // soft and dark: blood in the eye, not a painted flower blackTex = Texture2D.whiteTexture;
         var prim = GameObject.CreatePrimitive(PrimitiveType.Quad); quad = prim.GetComponent<MeshFilter>().sharedMesh; Destroy(prim);
         var blot = Blot(256, 9, new Color(0.2f, 0.005f, 0.005f));
-        bloodMat = new Material(Shader.Find("Sprites/Default")) { name = "Blood", mainTexture = blot };
+        bloodMat = new Material(Rp.Fx) { name = "Blood", mainTexture = blot };
         bloodDecal = Rp.Decal("Blood decal", blot, new Color(1.6f, 1f, 1f), 0.55f);         // wet: it catches the light
     }
 

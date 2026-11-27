@@ -45,9 +45,13 @@ public class TimeOfDay : MonoBehaviour
     public static readonly float[] RealSkyExposure = { 0.8f, 0.85f, 0.9f, 1.0f, 0.13f };
 
     // ---- HDRP scale (see the header)
-    public const float ExposureBase = -0.263f;        // EV100 at which HDRP's exposure multiplier is exactly 1
+    public const float ExposureBase = -1.6f;          // EV100 for a preset exposure of 0. Set by eye against the URP build's pictures on the promenade
+                                                      // (HdrpDebug.Expo); -0.26, where HDRP's exposure multiplier is exactly 1, came out 1.3 stops under.
     public const float SunLux = Mathf.PI;             // lux per unit of the old directional-light strength
-    public const float FogTop = 140f;                 // the haze thins out above the roofs (m)
+    public const float FogTop = 90f;                  // the haze thins out above the roofs (m)
+    // The photograph is shown darker than it lights: at the exposure the ground needs, the sky as it is would be
+    // washed out. Its light and reflections are multiplied back, so the scene is lit exactly as before.
+    public const float SkyShown = 0.5f;
 
     public static int Current { get; private set; } = 2;
     public static string Name => Presets[Current].name;
@@ -59,7 +63,8 @@ public class TimeOfDay : MonoBehaviour
         public VisualEnvironment env; public HDRISky hdri; public Fog fog; public Exposure expo; public IndirectLightingController ilc; public ColorAdjustments grade;
         public static Rig In(VolumeProfile p)
         {
-            T Get<T>() where T : VolumeComponent => p.TryGet<T>(out var c) ? c : p.Add<T>(true);
+            // overrides off: only what Write() sets is taken over, the rest (the grade's contrast, say) stays the scene's
+            T Get<T>() where T : VolumeComponent { if (!p.TryGet<T>(out var c)) c = p.Add<T>(false); c.active = true; return c; }
             return new Rig { env = Get<VisualEnvironment>(), hdri = Get<HDRISky>(), fog = Get<Fog>(), expo = Get<Exposure>(), ilc = Get<IndirectLightingController>(), grade = Get<ColorAdjustments>() };
         }
     }
@@ -70,20 +75,23 @@ public class TimeOfDay : MonoBehaviour
         r.env.skyType.Override((int)SkyType.HDRI); r.env.skyAmbientMode.Override(SkyAmbientMode.Dynamic);
         if (cube) r.hdri.hdriSky.Override(cube);
         r.hdri.skyIntensityMode.Override(SkyIntensityMode.Multiplier);
-        r.hdri.multiplier.Override(Mathf.Max(0.0001f, skyMul * dip)); r.hdri.exposure.Override(0f); r.hdri.rotation.Override(0f);
+        r.hdri.multiplier.Override(Mathf.Max(0.0001f, skyMul * dip * SkyShown)); r.hdri.exposure.Override(0f); r.hdri.rotation.Override(0f);
         r.hdri.updateMode.Override(EnvironmentUpdateMode.OnChanged);
 
         // haze. URP's fog was exp(-(d z)^2); HDRP's is exp(-z / meanFreePath). They agree at 150 m with meanFreePath = 1 / (d^2 * 150).
         r.fog.enabled.Override(true);
         r.fog.colorMode.Override(FogColorMode.ConstantColor); r.fog.color.Override(p.haze); r.fog.tint.Override(Color.white);
-        r.fog.meanFreePath.Override(Mathf.Clamp(1f / (p.hazeDensity * p.hazeDensity * 150f), 40f, 4000f));
-        r.fog.baseHeight.Override(-2f); r.fog.maximumHeight.Override(FogTop); r.fog.maxFogDistance.Override(4000f);
+        // (matched at 300 m in fact, x 1.6: an exponential haze is far heavier close by than URP's squared one, and
+        // close by is where the fight is - the street must stay crisp, the far blocks fade)
+        r.fog.meanFreePath.Override(Mathf.Clamp(1.6f / (p.hazeDensity * p.hazeDensity * 300f), 60f, 6000f));
+        r.fog.baseHeight.Override(-2f); r.fog.maximumHeight.Override(FogTop); r.fog.maxFogDistance.Override(700f);
         float hm = Mathf.Max(p.haze.r, p.haze.g, p.haze.b, 0.001f);
         r.fog.albedo.Override(new Color(p.haze.r / hm, p.haze.g / hm, p.haze.b / hm) * 0.9f);       // what the sun shafts are made of (volumetric fog)
-        r.fog.anisotropy.Override(0.55f); r.fog.globalLightProbeDimmer.Override(0.8f);
+        r.fog.anisotropy.Override(0.6f); r.fog.globalLightProbeDimmer.Override(0.35f);       // sun shafts, not a milky veil of sky light
 
         r.expo.mode.Override(ExposureMode.Fixed); r.expo.fixedExposure.Override(ExposureBase - p.exposure);
-        r.ilc.indirectDiffuseLightingMultiplier.Override(p.skyLight); r.ilc.reflectionLightingMultiplier.Override(Mathf.Clamp01(p.skyLight));
+        Rp.FxExposure(ExposureBase - p.exposure);          // the unlit effects follow the exposure (Benghazi/Fx)
+        r.ilc.indirectDiffuseLightingMultiplier.Override(p.skyLight / SkyShown); r.ilc.reflectionLightingMultiplier.Override(Mathf.Clamp01(p.skyLight) / SkyShown * 0.45f);     // steel mirrors the sky: at this exposure a full reflection turns the rifle silver
         r.grade.saturation.Override(p.saturation); r.grade.colorFilter.Override(p.filter);
     }
 

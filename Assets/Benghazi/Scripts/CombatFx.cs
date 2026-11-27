@@ -403,7 +403,7 @@ public static class CombatFx
 
     static void Build()
     {
-        var shader = Shader.Find("Sprites/Default");                // in "always included shaders": safe in the player
+        var shader = Rp.Fx;                // in "always included shaders": safe in the player
         bool sprites = shader;
         if (!shader) shader = Shader.Find("HDRP/Unlit");
         if (!shader) { failed = true; Debug.LogWarning("CombatFx off: no particle shader in this build"); return; }

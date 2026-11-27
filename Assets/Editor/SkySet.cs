@@ -49,7 +49,7 @@ public static class SkySet
             var ti = (TextureImporter)AssetImporter.GetAtPath(path);
             ti.textureShape = TextureImporterShape.TextureCube; ti.generateCubemap = TextureImporterGenerateCubemap.Cylindrical;
             ti.sRGBTexture = false; ti.mipmapEnabled = true; ti.isReadable = true;
-            ti.wrapMode = TextureWrapMode.Clamp; ti.maxTextureSize = 4096;          // 4096 x 2048 picture -> 1024 faces
+            ti.wrapMode = TextureWrapMode.Clamp; ti.maxTextureSize = 2048;          // -> 1024 px faces (4096 gave 2048 px faces: 160 MB of sky for no visible gain)
             ti.textureCompression = TextureImporterCompression.CompressedHQ;
             ti.SaveAndReimport();
             var cube = AssetDatabase.LoadAssetAtPath<Cubemap>(path);

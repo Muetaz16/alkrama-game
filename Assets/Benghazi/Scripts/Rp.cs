@@ -13,7 +13,22 @@ using UnityEngine.Rendering.HighDefinition;
 // it is not multiplied by the camera exposure, which is what a flash or a puff of dust wants.
 public static class Rp
 {
-    static Material tLit, tPbr, tCut, tDecal;
+    static Material tLit, tPbr, tCut, tDecal, tFx; static Shader fx;
+    static readonly int FxGainId = Shader.PropertyToID("_BenghaziFxGain");
+
+    /// <summary>The unlit effect shader (Benghazi/Fx: Sprites/Default that follows the camera exposure).</summary>
+    public static Shader Fx
+    {
+        get
+        {
+            if (!fx) { var t = T(ref tFx, "Fx"); fx = t ? t.shader : null; }
+            if (!fx) fx = Shader.Find("Benghazi/Fx");
+            if (!fx) fx = Shader.Find("Sprites/Default");
+            return fx;
+        }
+    }
+    /// <summary>Called when the exposure changes (TimeOfDay): fixed exposure in EV100.</summary>
+    public static void FxExposure(float ev100) => Shader.SetGlobalFloat(FxGainId, 1f / (1.2f * Mathf.Pow(2f, ev100)));
     static Material T(ref Material slot, string name)
     {
         if (!slot) slot = Resources.Load<Material>("Hdrp/" + name);

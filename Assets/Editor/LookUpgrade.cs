@@ -494,8 +494,8 @@ public static class LookUpgrade
         RenderSettings.fogDensity = 0.0034f;                 // dusty coastal haze gives depth
         RenderSettings.fogColor = new Color(0.83f, 0.80f, 0.74f);
         var sky = RenderSettings.skybox;
-        sky.SetFloat("_SunSize", 0.035f); sky.SetFloat("_AtmosphereThickness", 1.02f);
-        sky.SetColor("_SkyTint", new Color(0.62f, 0.64f, 0.68f)); sky.SetFloat("_Exposure", 1.05f);
+        if (sky) { sky.SetFloat("_SunSize", 0.035f); sky.SetFloat("_AtmosphereThickness", 1.02f);
+        sky.SetColor("_SkyTint", new Color(0.62f, 0.64f, 0.68f)); sky.SetFloat("_Exposure", 1.05f); }      // HDRP clears the built-in skybox
 
         // HDRP: the sky lights and reflects by itself (no reflection probe), and the post-processing overrides
         // are written by CinematicLook.PostFx

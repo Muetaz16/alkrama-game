@@ -259,7 +259,7 @@ public class PlayerBodyPose : MonoBehaviour
     {
         if (!splash)
         {
-            var sh = Shader.Find("Sprites/Default"); if (!sh) return;
+            var sh = Rp.Fx; if (!sh) return;
             var go = new GameObject("Swim splash"); splash = go.AddComponent<ParticleSystem>();
             splash.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
             var main = splash.main; main.loop = false; main.playOnAwake = false; main.maxParticles = 160; main.gravityModifier = 1.3f; main.simulationSpace = ParticleSystemSimulationSpace.World;
