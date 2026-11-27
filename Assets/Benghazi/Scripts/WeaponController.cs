@@ -121,7 +121,7 @@ public class WeaponController : MonoBehaviour
     void Update()
     {
         if (!externalInput) ReadInput();
-        if (frozen) { fireHeld = aimHeld = reloadPressed = quickKnife = false; switchTo = -1; }
+        if (frozen || player.Swimming) { fireHeld = aimHeld = reloadPressed = quickKnife = false; switchTo = -1; }      // both hands are busy in the water
         if (toggleView) { SetView(!camRig.firstPerson); toggleView = false; }
         // quick knife: out, one slash, back to the gun
         if (quickKnife && !W.melee && !vm.Busy) { quickFrom = current; switchTo = 2; quickBack = Time.time + 0.75f; }
@@ -462,8 +462,29 @@ public class WeaponController : MonoBehaviour
     }
 
     // third person: lean the chest with the camera pitch
+    // Swimming: the rifle is swung round onto his back on its sling, muzzle up over the left shoulder, and
+    // comes back into his hands when he finds his feet.
+    bool slung; Transform slingParent; Vector3 slingPos; Quaternion slingRot;
+    public bool RifleSlung => slung;
+    void Sling(bool on)
+    {
+        var g = current == 0 ? rifle : current == 1 ? sniper : knife;
+        if (on == slung || !g || !chest) return;
+        if (on)
+        {
+            slingParent = g.parent; slingPos = g.localPosition; slingRot = g.localRotation; slingGun = g;
+            var up = transform.up * 0.92f - transform.right * 0.38f;
+            g.SetPositionAndRotation(chest.position - transform.forward * 0.19f + transform.up * 0.02f + transform.right * 0.06f - up.normalized * 0.28f, Quaternion.LookRotation(up, -transform.forward));
+            g.SetParent(chest, true);
+        }
+        else if (slingGun) { slingGun.SetParent(slingParent, false); slingGun.localPosition = slingPos; slingGun.localRotation = slingRot; }
+        slung = on;
+    }
+    Transform slingGun;
+
     void LateUpdate()
     {
+        if (player.Swimming != slung) Sling(player.Swimming);
         if (chest && !camRig.firstPerson)
         {
             chest.rotation = Quaternion.AngleAxis(camRig.pitch * 0.55f, transform.right) * chest.rotation;
@@ -555,7 +576,7 @@ public class WeaponController : MonoBehaviour
         var small = new GUIStyle(GUI.skin.label) { fontSize = Mathf.RoundToInt(h * 0.021f) };
         string ammo = W.melee ? "" : reloading ? "RELOADING" : $"{W.mag} / {W.reserve}";
         Shadowed(new Rect(w - 420, h - 110, 400, 90), $"{W.name}\n{ammo}", style);
-        Shadowed(new Rect(20, h - 70, 1500, 60), "LMB fire · RMB aim · R reload · Q/E lean · X shoulder · 1/2/3 weapon · F knife · V view · Shift sprint / hold breath · C crouch · Z prone · Space jump" + (lastShot != "" ? $"   last: {lastShot}" : ""), small);
+        Shadowed(new Rect(20, h - 70, 1500, 60), "LMB fire · RMB aim · R reload · Q/E lean · X shoulder · 1/2/3 weapon · F knife · V view · Shift sprint / hold breath · C crouch · Z prone · Space jump · T time of day · F11 window" + (lastShot != "" ? $"   last: {lastShot}" : ""), small);
     }
 
     // white text with a dark shadow so it reads on bright stone and sky

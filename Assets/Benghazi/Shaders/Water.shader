@@ -42,6 +42,11 @@ Shader "Benghazi/Water"
                 half4 _ShallowColor, _DeepColor, _FoamColor;
                 float _DepthFade, _WaveScale, _WaveStrength, _WaveSpeed, _FoamDistance, _Glitter;
             CBUFFER_END
+            // A man in the water (set by PlayerController): xyz where he is, w how far in he is (0 none .. 1 swimming).
+            // The depth buffer sees his body just under the surface and would call it a sand bar - turquoise and
+            // ringed with foam. Round him the water keeps its open-sea colour, with only a little wash of foam,
+            // and stays clear enough to see him through it.
+            float4 _Swimmer;
 
             struct Attributes { float4 positionOS : POSITION; };
             struct Varyings
@@ -91,6 +96,9 @@ Shader "Benghazi/Water"
 
                 // body colour: shallow turquoise -> deep blue, lit by sun and sky
                 half deep = saturate(depth / _DepthFade);
+                half nearMan = saturate(1 - distance(i.positionWS.xz, _Swimmer.xz) / 3.2) * _Swimmer.w;
+                nearMan *= nearMan * (3 - 2 * nearMan);
+                deep = lerp(deep, max(deep, 0.8), nearMan);
                 half3 body = lerp(_ShallowColor.rgb, _DeepColor.rgb, deep * deep * (3 - 2 * deep));
                 half3 ambient = SampleSH(half3(0, 1, 0));
                 body *= ambient * 0.9 + sun.color * saturate(sun.direction.y) * 0.55 * shadow;
@@ -109,10 +117,12 @@ Shader "Benghazi/Water"
                 half foamLine = 1 - saturate(depth / _FoamDistance);
                 half breakup = saturate((n.x + n.z) * 3 + 0.55);
                 half foam = saturate(foamLine * 1.6 - (1 - breakup) * 0.8);
+                foam *= 1 - nearMan * 0.82;                                   // a wash round him, not a white ring
                 col = lerp(col, _FoamColor.rgb * (ambient + sun.color * 0.6 * shadow), foam);
 
                 // see-through in the shallows, solid further out
                 half alpha = saturate(lerp(0.55, 1.0, deep) + fres * 0.4 + foam);
+                alpha = lerp(alpha, saturate(0.8 + fres * 0.3 + foam), nearMan);     // he shows through the water he is in
                 alpha *= saturate(depth * 4);
                 col = MixFog(col, i.fogFactor);
                 return half4(col, alpha);

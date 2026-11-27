@@ -16,6 +16,8 @@ public class ViewModel : MonoBehaviour
     Transform root;
     readonly Transform[] holder = new Transform[3], model = new Transform[3], mag = new Transform[3], bolt = new Transform[3],
         handle = new Transform[3], muzzle = new Transform[3], eject = new Transform[3], flash = new Transform[3];
+    readonly Vector3[] butt = new Vector3[3];
+    float deadT; public float DeadT => deadT;
     readonly Vector3[] sight = new Vector3[3], magHome = new Vector3[3], boltHome = new Vector3[3], handleAt = new Vector3[3];
     Renderer[][] renderers = new Renderer[3][];
 
@@ -77,6 +79,9 @@ public class ViewModel : MonoBehaviour
             {
                 var b = MagBox(mag[i]);
                 magCentre[i] = b.center; magSize[i] = b.size;
+                // the butt plate: the rear end of the whole gun, on the line of the stock (a hand's breadth under the sights)
+                var whole = MagBox(model[i]);
+                butt[i] = new Vector3(0, sight[i].y - 0.105f, whole.min.z + 0.012f);
                 magFront[i] = new Vector3(b.center.x, b.max.y, b.max.z); magRear[i] = new Vector3(b.center.x, b.max.y, b.min.z);
                 if (i == AK && GunFactory.RealAK) { magFront[i] = new Vector3(0, 0.032f, 0.205f); magRear[i] = new Vector3(0, 0.032f, 0.15f); magCentre[i] = new Vector3(0, -0.07f, 0.215f); }
                 spare[i] = Instantiate(mag[i].gameObject, mag[i].parent, false).transform; spare[i].name = "Spare mag";
@@ -388,8 +393,15 @@ public class ViewModel : MonoBehaviour
 
         // hip <-> aim down sights
         var adsPos = w == Knife ? HipPos[w] : new Vector3(0, 0, AdsDistance(w)) - sight[w];
-        var pos = Vector3.Lerp(Hip(w), adsPos, a);
-        var rot = Vector3.Lerp(HipRot[w], Vector3.zero, a);
+        // Shouldered ready, as the eye really sees it with the cheek on the stock (owner's reference photos):
+        // the rifle runs straight away from just under the eye, a little to the firing side, its comb and the
+        // back of the receiver cover coming up into the bottom of the picture, the sights a few centimetres
+        // under the line of sight. Aiming is then only a small drop of the head onto them - not a swing in
+        // from the side. The firing hand is under the stock, almost out of sight.
+        var ready = w == Knife ? HipPos[w] : adsPos + new Vector3(0.026f, -0.042f, 0.225f);        // far enough out to see the whole receiver cover and the first of the wooden stock behind it       // the eye a hand's breadth behind the receiver cover: its back end and the comb of the stock fill the bottom of the view
+        var readyRot = w == Knife ? HipRot[w] : new Vector3(0.4f, -0.6f, 1.2f);
+        var pos = Vector3.Lerp(ready, adsPos, a);
+        var rot = Vector3.Lerp(readyRot, Vector3.zero, a);
 
         // breathing
         pos += new Vector3(Mathf.Sin(time * 0.8f) * 0.0009f, Mathf.Sin(time * 1.6f) * 0.0014f, 0) * (free + 0.25f);
@@ -425,7 +437,7 @@ public class ViewModel : MonoBehaviour
         bool calm = Time.time - combatAt > 2.5f && !sprint && w != Knife && !Playing(reloadAnim);
         lowT = Mathf.MoveTowards(lowT, calm ? 1 : 0, dt / (calm ? 0.7f : 0.12f));
         float low = Mathf.SmoothStep(0, 1, lowT) * free;
-        pos += new Vector3(0.008f, -0.022f, -0.01f) * low; rot += new Vector3(7.5f, -3f, 3f) * low;
+        pos += new Vector3(0.003f, -0.008f, -0.003f) * low; rot += new Vector3(1.6f, -0.6f, 1f) * low;
 
         // strafe tilt, crouch cant, jump lift, landing dip
         rot.z += player.Strafe * 6f * free;
@@ -503,12 +515,23 @@ public class ViewModel : MonoBehaviour
             rot = Vector3.Lerp(rot, new Vector3(rot.x, -rot.y, -rot.z), mir) + new Vector3(8f, 0, 0) * across * free;
         }
 
+        // Killed: first the support hand slips off the handguard and the muzzle, held by one hand now, sags;
+        // a second later the firing hand loses its grip and the rifle falls away from it.
+        deadT = player.frozen ? deadT + dt : 0;
+        if (deadT > 0 && w != Knife)
+        {
+            float side = shoulderT >= 0 ? 1 : -1;
+            float sag = Sm(deadT, 0.05f, 0.6f), fall = Sm(deadT, 1.05f, 1.75f); fall *= fall;
+            pos += new Vector3(0.01f * side, -0.035f, -0.01f) * sag + new Vector3(0.05f * side, -0.75f, 0.06f) * fall;
+            rot += new Vector3(19f, -4f * side, 7f * side) * sag + new Vector3(38f, 10f * side, 70f * side) * fall;
+        }
+
         holder[w].localPosition = pos;
         holder[w].localRotation = Quaternion.Euler(rot);
 
         // looking through the scope: the overlay takes over, hide the rifle
         bool scoped = w == Sniper && aimT > 0.88f && !Playing(boltAnim);
-        foreach (var rr in renderers[w]) rr.enabled = !scoped;
+        foreach (var rr in renderers[w]) rr.enabled = !scoped && player.SwimBlend < 0.5f;       // in the water the rifle is on his back
         scopeHide = scoped ? 1 : 0;
         Arms(w, scoped);
     }
@@ -604,6 +627,17 @@ public class ViewModel : MonoBehaviour
         var gl = GunFactory.Find(model[Sniper], "GripL");
         gripL[Sniper] = gl ? model[Sniper].InverseTransformPoint(gl.position) : new Vector3(0, -0.01f, 0.25f);
         gripR[Knife] = new Vector3(0, 0, -0.005f);
+    }
+
+    // a hand with nothing left in it: fallen to the side, fingers half open, swinging to rest (side +1 = the right arm)
+    Grip Limp(float side, float since)
+    {
+        var ct = cam.transform; float sw = Mathf.Exp(-Mathf.Max(0, since) * 2.2f) * Mathf.Sin(Mathf.Max(0, since) * 7f) * 0.05f;
+        return new Grip
+        {
+            wrist = ct.TransformPoint(new Vector3(0.3f * side, -0.6f, 0.16f + sw)), pole = -ct.forward * 0.6f + ct.right * side * 0.5f - ct.up * 0.3f,
+            rot = Basis(-ct.up * 0.95f + ct.forward * 0.25f, ct.forward * 0.6f - ct.right * side * 0.6f), i = 0.22f, m = 0.28f, r = 0.32f, l = 0.36f, t = 0.12f
+        };
     }
 
     // the firing hand: s = +1 it is the right hand (rifle in the right shoulder), -1 the left
@@ -707,7 +741,27 @@ public class ViewModel : MonoBehaviour
         arms.rotation = ct.rotation * Quaternion.Euler(0, -blade, 0);
         var mid = (arm[0][0].position + arm[1][0].position) * 0.5f;
         arms.position += ct.position + ct.rotation * new Vector3(0, -0.34f, 0.105f) - mid;  // body well under the view
+        // The stock is IN the shoulder: the body is brought to the rifle so that the pocket of the firing
+        // shoulder (just inside the joint, below the collar bone) sits on the butt plate, and stays on it
+        // through recoil, sway and the ready postures. Without this the arms held the rifle out in front like
+        // a pistol, with air between the butt and the man.
+        if (w != Knife && player.SwimBlend < 0.5f)
+        {
+            int fa = k >= 0.5f ? 0 : 1; float fs = fa == 0 ? 1 : -1;
+            var pocket = arm[fa][0].position - ct.right * (0.05f * fs) + ct.up * 0.03f + ct.forward * 0.055f;
+            var plate = holder[w].TransformPoint(butt[w]);
+            float seat = (1 - 0.45f * Mathf.SmoothStep(0, 1, sprintT)) * (1 - Mathf.Abs(Mathf.Sin(k * Mathf.PI)) * 0.6f) * (deadT > 1.05f ? 1 - Sm(deadT, 1.05f, 1.4f) : 1);
+            // ... but never so far up that his own chest rig fills the bottom of the picture: the shoulder comes
+            // back and across to the stock in full, and up only a little (the rest of the rise is the shrug of
+            // the shoulder into the stock, which the eye behind the sights never sees)
+            var local = ct.InverseTransformVector(plate - pocket);
+            local.y = Mathf.Min(local.y, 0.1f);
+            var shift = ct.TransformVector(Vector3.ClampMagnitude(local, 0.3f)) * seat;
+            arms.position += shift;
+            shoulderGap = Vector3.Distance(plate, pocket + shift);
+        }
 
+        if (player.SwimBlend > 0.5f) { arm[1][0].localScale = Vector3.one; SwimArms(); return; }
         // finger on the trigger only when the rifle is on a target or firing
         bool onTarget = aimT > 0.6f || Time.time - lastFireT < 0.45f;
         trigT = Mathf.MoveTowards(trigT, onTarget && !Playing(reloadAnim) && !switching ? 1 : 0, dt / 0.09f);
@@ -745,10 +799,51 @@ public class ViewModel : MonoBehaviour
         // which hand does what: k = 1 the right hand fires, 0 the left one does (support-side shoulder)
         bool reloading = Playing(reloadAnim) && reloadAnim.weapon == w;
         float free = Mathf.SmoothStep(0, 1, sprintT);
-        Grip Sup(float s) => reloading ? Grip.Mix(Support(w, s, lhA), Support(w, s, lhB), lhK) : free > 0.001f ? Grip.Mix(Support(w, s, 0), Support(w, s, 6), free) : Support(w, s, 0);
-        Place(0, k > 0.999f ? Firing(w, 1) : k < 0.001f ? Sup(-1) : Grip.Mix(Sup(-1), Firing(w, 1), k));
-        Place(1, k > 0.999f ? Sup(1) : k < 0.001f ? Firing(w, -1) : Grip.Mix(Firing(w, -1), Sup(1), k));
+        // dying: the support hand goes first, the firing hand a second after it (whichever hand that is)
+        float drop = deadT > 0 ? Sm(deadT, 0.05f, 0.6f) : 0, release = deadT > 0 ? Sm(deadT, 1.05f, 1.5f) : 0;
+        Grip SupLive(float s) => reloading ? Grip.Mix(Support(w, s, lhA), Support(w, s, lhB), lhK) : free > 0.001f ? Grip.Mix(Support(w, s, 0), Support(w, s, 6), free) : Support(w, s, 0);
+        Grip Sup(float s) => drop > 0.001f ? Grip.Mix(SupLive(s), Limp(-s, deadT), drop) : SupLive(s);
+        Grip Fir(float s) => release > 0.001f ? Grip.Mix(Firing(w, s), Limp(s, deadT - 1f), release) : Firing(w, s);
+        Place(0, k > 0.999f ? Fir(1) : k < 0.001f ? Sup(-1) : Grip.Mix(Sup(-1), Fir(1), k));
+        Place(1, k > 0.999f ? Sup(1) : k < 0.001f ? Fir(-1) : Grip.Mix(Fir(-1), Sup(1), k));
     }
+
+    // Front crawl, seen from the swimmer's own eyes: each arm in turn reaches out ahead just under the
+    // surface, catches, pulls down and back under the body, then comes out and swings forward over the water,
+    // elbow high. Half a cycle apart. Hands flat, fingers together, palm down then back.
+    void SwimArms()
+    {
+        var ct = cam.transform; float moving = Mathf.Clamp01(player.Speed / PlayerController.SwimSpeed);
+        for (int h = 0; h < 2; h++)
+        {
+            float s = h == 0 ? 1 : -1;
+            float t = Mathf.Repeat(player.SwimPhase / (2 * Mathf.PI) + (h == 0 ? 0 : 0.5f), 1f);
+            Vector3 p; Vector3 fingers, across;
+            if (t < 0.55f)
+            {
+                // the pull: from full reach, down and back in an S under the chest
+                float k = t / 0.55f, e = k * k * (3 - 2 * k);
+                p = new Vector3(s * Mathf.Lerp(0.2f, 0.16f, e) + s * Mathf.Sin(e * Mathf.PI) * -0.07f, Mathf.Lerp(-0.14f, -0.52f, Mathf.Sin(e * Mathf.PI * 0.5f)), Mathf.Lerp(0.66f, 0.04f, e));
+                fingers = ct.forward * Mathf.Lerp(1f, 0.25f, e) - ct.up * Mathf.Lerp(0.12f, 1f, e);
+            }
+            else
+            {
+                // the recovery: out of the water at the hip, round and forward with the elbow high, and in again
+                float k = (t - 0.55f) / 0.45f, e = k * k * (3 - 2 * k);
+                p = new Vector3(s * (Mathf.Lerp(0.16f, 0.2f, e) + Mathf.Sin(e * Mathf.PI) * 0.24f), Mathf.Lerp(-0.52f, -0.14f, e) + Mathf.Sin(e * Mathf.PI) * 0.26f, Mathf.Lerp(0.04f, 0.66f, e));
+                fingers = ct.forward * Mathf.Lerp(0.3f, 1f, e) - ct.up * Mathf.Lerp(0.9f, 0.15f, e);
+            }
+            // treading water when he is not going anywhere: small sculling circles out in front
+            var tread = new Vector3(s * (0.26f + Mathf.Cos(player.SwimPhase * 1.5f + h * Mathf.PI) * 0.09f), -0.3f + Mathf.Sin(player.SwimPhase * 1.5f) * 0.03f, 0.34f + Mathf.Sin(player.SwimPhase * 1.5f + h * Mathf.PI) * 0.06f);
+            p = Vector3.Lerp(tread, p, moving);
+            fingers = Vector3.Slerp(ct.forward * 0.9f + ct.right * s * 0.35f, fingers, moving);
+            across = -ct.right * s + ct.up * 0.15f;                    // knuckle line: palm faces down / back
+            Place(h, new Grip { wrist = ct.TransformPoint(p), rot = Basis(fingers, across), pole = -ct.up * 0.4f + ct.right * s - ct.forward * 0.3f, i = 0.08f, m = 0.08f, r = 0.1f, l = 0.12f, t = 0.1f });
+        }
+    }
+
+    float shoulderGap = -1;
+    public string ShoulderDebug() => $"butt plate to the shoulder pocket {(shoulderGap < 0 ? "-" : (shoulderGap * 100).ToString("F1") + " cm")}";
 
     // how far each wrist ended up from where its grip wants it (0 = the arm reached)
     public string ArmsDebug() => $"wrist miss right {wristMiss[0] * 100:F1} cm, left {wristMiss[1] * 100:F1} cm";

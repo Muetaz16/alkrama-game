@@ -63,11 +63,14 @@ public class ThirdPersonCamera : MonoBehaviour
         // a fighter's head: tilts with the lean, and a little into fast turns (the body leads the turn)
         leanRoll = Mathf.Lerp(leanRoll, -target.Lean * 11f, 1 - Mathf.Exp(-12 * dt));
         turnRoll = Mathf.Lerp(turnRoll, firstPerson && !aimingFov ? -Mathf.Clamp(d.x / Mathf.Max(dt, 1e-4f) * 0.008f, -2.5f, 2.5f) : 0f, 1 - Mathf.Exp(-6 * dt));
-        var rot = Quaternion.Euler(pitch + startLean, yaw, roll + leanRoll + turnRoll);
+        // swimming: the head rolls to the side with each arm and dips a little, as it does in a front crawl
+        float sw = target.SwimBlend * Mathf.Clamp01(target.Speed / PlayerController.SwimSpeed);
+        float swimRoll = Mathf.Sin(target.SwimPhase) * 5.5f * sw, swimPitch = (1.5f + Mathf.Sin(target.SwimPhase * 2f) * 1.2f) * sw;
+        var rot = Quaternion.Euler(pitch + startLean + swimPitch, yaw, roll + leanRoll + turnRoll + swimRoll);
         if (firstPerson)
         {
             // eyes of the soldier: lower when crouched, a light bob (the gun does most of the moving)
-            eye = Mathf.Lerp(eye, target.prone ? proneEye : target.crouch ? crouchEye : eyeHeight, 1 - Mathf.Exp(-(target.prone || eye < crouchEye - 0.1f ? 5.5f : 10f) * dt));
+            eye = Mathf.Lerp(eye, target.Swimming ? PlayerController.FloatDepth + 0.13f : target.prone ? proneEye : target.crouch ? crouchEye : eyeHeight, 1 - Mathf.Exp(-(target.prone || eye < crouchEye - 0.1f ? 5.5f : 10f) * dt));
             var eyePos = target.transform.position + Vector3.up * (eye + target.LandDip * 0.6f) + Quaternion.Euler(0, yaw, 0) * (new Vector3(0, 0, 0.1f) + bob * 0.55f);
             // leaning: head out to the side, never through the wall
             var side = Quaternion.Euler(0, yaw, 0) * Vector3.right; float leanWant = target.Lean * 0.34f;

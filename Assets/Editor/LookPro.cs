@@ -1,4 +1,4 @@
-﻿// Real-world assets (Poly Haven, CC0) on top of the city:
+// Real-world assets (Poly Haven, CC0) on top of the city:
 //   sky       photographed sky (kloofendal 48d partly cloudy) as the skybox and ambient light; the sun light
 //             is turned to where the sun is in the photo, fog takes the colour of its horizon
 //   surfaces  2K scanned textures with roughness on asphalt, promenade, sea wall, beach, kerbs, sidewalks,
@@ -79,7 +79,7 @@ public static class LookPro
     }
 
     // minimal Radiance .hdr reader (new-style RLE), every 'step'-th pixel
-    static (int w, int h, Color[] px) ReadHdr(string path, int step)
+    internal static (int w, int h, Color[] px) ReadHdr(string path, int step)
     {
         var b = File.ReadAllBytes(path); int p = 0;
         string Line() { var s = new System.Text.StringBuilder(); while (p < b.Length && b[p] != '\n') s.Append((char)b[p++]); p++; return s.ToString(); }
