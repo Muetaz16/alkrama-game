@@ -29,6 +29,15 @@ public static class CarColliders
         Transform holder = null;
         foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsInactive.Include)) if (t.name == "Cars" && t.childCount > 0 && t.GetChild(0).GetComponent<LODGroup>()) { holder = t; break; }
         if (!holder) { Debug.LogError("[cars] no 'Cars' object with LOD groups in the scene"); return -1; }
+        // no car stands on the lighthouse grounds: the plinth and its walls are built over that spot, and a car
+        // left there ends up walled into the stone
+        var lh = SceneBuilder.FindLighthouse(); int buried = 0;
+        for (int i = holder.childCount - 1; i >= 0; i--)
+        {
+            var c = holder.GetChild(i); var d = c.position - lh; d.y = 0;
+            if (d.magnitude < 22f) { Object.DestroyImmediate(c.gameObject); buried++; }
+        }
+        Debug.Log($"[cars] {buried} car(s) removed from the lighthouse grounds (within 22 m of {lh})");
         int done = 0, tris = 0;
         foreach (Transform car in holder)
         {

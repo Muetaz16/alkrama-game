@@ -26,6 +26,14 @@ public class PlayerController : MonoBehaviour
     [HideInInspector] public bool frozen;        // dead: no moving until the respawn
     [HideInInspector] public float combatUntil;  // kept for the weapon (sprint-to-fire)
 
+    // Water. He walks in until it is up to his chest, then he is afloat and swims: a steady front crawl,
+    // faster with the sprint key; the rifle goes on his back (WeaponController). Wading slows him first.
+    public const float WaterLevel = -0.22f, SwimDepth = 1.22f, StandDepth = 1.05f, SwimSpeed = 1.7f, SwimSprint = 2.7f, FloatDepth = 1.47f;
+    static readonly int SwimmerId = Shader.PropertyToID("_Swimmer");
+    public bool Swimming { get; private set; }
+    public float WaterDepth { get; private set; }  // water above his feet, metres
+    public float SwimPhase { get; private set; }   // radians, one stroke cycle (both arms) per 2 pi
+    public float SwimBlend { get; private set; }   // 0 on his feet .. 1 swimming, eased
     public float Speed { get; private set; }
     public bool Sprinting { get; private set; }
     public bool Tactical { get; private set; }
@@ -108,6 +116,14 @@ public class PlayerController : MonoBehaviour
         float dt = Mathf.Max(Time.deltaTime, 1e-4f);
         var input = Vector2.ClampMagnitude(moveInput, 1f);
 
+        // the sea: afloat once it reaches the chest, on his feet again when the bottom comes back up
+        WaterDepth = Mathf.Max(0, WaterLevel - transform.position.y);
+        if (!Swimming && WaterDepth > SwimDepth && !frozen) { Swimming = true; crouch = prone = false; }
+        else if (Swimming && (WaterDepth < StandDepth || frozen) && SeaBedWithin(StandDepth + 0.1f)) Swimming = false;
+        SwimBlend = Mathf.MoveTowards(SwimBlend, Swimming ? 1 : 0, dt / 0.45f);
+        var mid = transform.position + transform.forward * (0.1f * SwimBlend);        // swimming, his body lies out behind where he "stands"
+        Shader.SetGlobalVector(SwimmerId, new Vector4(mid.x, mid.y, mid.z, Mathf.Clamp01(WaterDepth / 0.6f)));     // for the water round him (Water.shader)
+        if (Swimming) { crouch = prone = false; jumpPressed = false; aiming = false; }
         // sprint: forward only, not while aiming; it stands you up from a crouch
         if (sprint && input.y > 0.3f && crouch && !aiming) crouch = false;
         bool sprinting = sprint && !aiming && input.y > 0.3f && !crouch && !prone;
@@ -123,9 +139,11 @@ public class PlayerController : MonoBehaviour
         Lean = Mathf.MoveTowards(Lean, sprinting || prone ? 0 : Mathf.Clamp(leanInput, -1, 1), dt / 0.18f);
         float top = prone ? (aiming ? ProneAimMove : ProneMove) : crouch ? (aiming ? CrouchAimMove : CrouchMove) : aiming ? AimMove : tactical ? TacticalMove : sprinting ? SprintMove : walk ? WalkSpeed : JogSpeed;
         top *= 1f - 0.35f * Mathf.Abs(Lean);
+        if (Swimming) { top = sprint && input.y > 0.3f ? SwimSprint : SwimSpeed; if (input.y < -0.1f) top *= 0.55f; sprinting = false; tactical = false; }
+        else if (WaterDepth > 0.35f) top *= Mathf.Lerp(1f, 0.45f, Mathf.InverseLerp(0.35f, SwimDepth, WaterDepth));     // wading: the deeper, the slower
         var wish = Quaternion.Euler(0, yaw, 0) * new Vector3(input.x, 0, input.y);
         if (wish.sqrMagnitude > 1e-4f) wish = wish.normalized * top * input.magnitude;
-        float rate = !cc.isGrounded ? airControl : input.sqrMagnitude > 1e-4f ? accel : decel;
+        float rate = Swimming ? (input.sqrMagnitude > 1e-4f ? 2.6f : 1.6f) : !cc.isGrounded ? airControl : input.sqrMagnitude > 1e-4f ? accel : decel;      // water: slow to get going, glides on
         velocity = Vector3.Lerp(velocity, wish, 1 - Mathf.Exp(-rate * dt));
 
         // gravity and jumping
@@ -133,6 +151,13 @@ public class PlayerController : MonoBehaviour
         if (jumpPressed && cc.isGrounded && !crouch) { vy = Mathf.Sqrt(2f * -gravity * jumpHeight); anim?.SetTrigger(Jump); }
         jumpPressed = false;
         vy += gravity * dt;
+        if (Swimming)
+        {
+            // buoyancy: held with the shoulders at the surface, riding a little with each stroke
+            float want = WaterLevel - FloatDepth + Mathf.Sin(SwimPhase * 2f) * 0.03f * Mathf.Clamp01(Speed);
+            vy = Mathf.Clamp((want - transform.position.y) * 5f, -1.5f, 1.5f);
+            SwimPhase += dt * Mathf.Lerp(2.2f, 6.2f, Mathf.Clamp01(Speed / SwimSprint));       // strokes follow the speed; treading water when still
+        }
         var before = transform.position;
         cc.Move((velocity + Vector3.up * vy) * dt);
         // keep only the speed we really got (slide along walls, no stored momentum)
@@ -161,7 +186,7 @@ public class PlayerController : MonoBehaviour
         transform.rotation = Quaternion.Euler(0, bodyYaw, 0);
 
         Speed = new Vector2(velocity.x, velocity.z).magnitude;
-        Sprinting = sprinting && Speed > JogSpeed + 0.5f;
+        Sprinting = !Swimming && sprinting && Speed > JogSpeed + 0.5f;
         Tactical = tactical && Sprinting;
         var local = transform.InverseTransformDirection(velocity);                    // for the legs: relative to the feet
         var view = Quaternion.Inverse(Quaternion.Euler(0, yaw, 0)) * velocity;          // for the camera and the rifle: relative to the eyes
@@ -185,6 +210,8 @@ public class PlayerController : MonoBehaviour
             StepPhase = (st.normalizedTime % 1f) * Mathf.PI * 2f;
         }
     }
+
+    bool SeaBedWithin(float depth) => Physics.Raycast(new Vector3(transform.position.x, WaterLevel, transform.position.z), Vector3.down, depth + 0.3f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
 
     void ReadInput()
     {
