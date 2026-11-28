@@ -71,7 +71,12 @@ public static class HdrpSetup
         // deferred only: hundreds of opaque buildings and one sun - cheapest lighting, half the shader variants.
         // (No MSAA in deferred; anti-aliasing is temporal, see CinematicLook.MainCamera.)
         s.supportedLitShaderMode = RenderPipelineSettings.SupportedLitShaderMode.DeferredOnly;
-        s.colorBufferFormat = RenderPipelineSettings.ColorBufferFormat.R11G11B10;
+        // 16-bit float colour all the way to the tonemapper: no banding in the sky gradient, the haze or the night
+        // (11/11/10 bits has no sign and only 5-6 bits of mantissa: it steps visibly in smooth dark gradients)
+        s.colorBufferFormat = RenderPipelineSettings.ColorBufferFormat.R16G16B16A16;
+        var pp = s.postProcessSettings;
+        pp.lutSize = 65; pp.lutFormat = GradingLutFormat.R16G16B16A16; pp.bufferFormat = PostProcessBufferFormat.R16G16B16A16;
+        s.postProcessSettings = pp;
         s.supportSSR = true; s.supportSSRTransparent = false;
         s.supportSSAO = true; s.supportSSGI = true;
         s.supportVolumetrics = true; s.supportVolumetricClouds = false;
@@ -88,7 +93,7 @@ public static class HdrpSetup
         var sh = s.hdShadowInitParams;
         sh.shadowResolutionDirectional = new IntScalableSetting(new[] { 1024, 2048, 2048, 4096 }, ScalableSettingSchemaId.With4Levels);
         sh.maxDirectionalShadowMapResolution = 4096;
-        sh.directionalShadowFilteringQuality = HDShadowFilteringQuality.Medium;
+        sh.directionalShadowFilteringQuality = HDShadowFilteringQuality.High;        // PCSS: sharp where the object touches the ground, softer with distance
         sh.supportScreenSpaceShadows = false;
         s.hdShadowInitParams = sh;
         // the picture can be drawn smaller and scaled up with the temporal upscaler (GraphicsQuality sets the percentage)
@@ -101,6 +106,8 @@ public static class HdrpSetup
 
         bool switched = GraphicsSettings.defaultRenderPipeline != asset;
         GraphicsSettings.defaultRenderPipeline = asset;
+        // the player may drive an HDR10 display (10 bits, wide gamut). It stays in SDR unless started with -hdr (GraphicsQuality).
+        PlayerSettings.allowHDRDisplaySupport = true; PlayerSettings.hdrBitDepth = HDRDisplayBitDepth.BitDepth10;
         int keep = QualitySettings.GetQualityLevel();
         for (int i = 0; i < QualitySettings.names.Length; i++) { QualitySettings.SetQualityLevel(i, false); QualitySettings.renderPipeline = asset; }
         QualitySettings.SetQualityLevel(keep, false);
@@ -145,8 +152,9 @@ public static class HdrpSetup
             m.shader = Shader.Find(shader); set(m); if (shader.StartsWith("HDRP/")) HDMaterial.ValidateMaterial(m); EditorUtility.SetDirty(m);
             return m;
         }
-        Make("Lit", HdLit, m => { m.SetTexture("_BaseColorMap", white); });
-        Make("LitPbr", HdLit, m => { m.SetTexture("_BaseColorMap", white); m.SetTexture("_NormalMap", flat); m.SetTexture("_MaskMap", mask); });
+        void Aa(Material m) { m.SetFloat("_EnableGeometricSpecularAA", 1); m.SetFloat("_SpecularAAScreenSpaceVariance", 0.15f); m.SetFloat("_SpecularAAThreshold", 0.2f); }
+        Make("Lit", HdLit, m => { m.SetTexture("_BaseColorMap", white); Aa(m); });
+        Make("LitPbr", HdLit, m => { m.SetTexture("_BaseColorMap", white); m.SetTexture("_NormalMap", flat); m.SetTexture("_MaskMap", mask); Aa(m); });
         Make("LitCutout", HdLit, m => { m.SetTexture("_BaseColorMap", white); m.SetFloat("_AlphaCutoffEnable", 1); m.SetFloat("_AlphaCutoff", 0.5f); m.SetFloat("_DoubleSidedEnable", 1); m.SetFloat("_DoubleSidedNormalMode", 2); });
         Make("Fx", "Benghazi/Fx", m => { });
         Make("Decal", "HDRP/Decal", m =>
@@ -267,6 +275,10 @@ public static class HdrpSetup
         m.SetFloat("_SurfaceType", transparent ? 1 : 0); m.SetFloat("_BlendMode", 0);
         if (transparent) { m.SetFloat("_TransparentZWrite", 0); m.SetFloat("_EnableFogOnTransparent", 1); }
         m.SetFloat("_SupportDecals", 1); m.SetFloat("_ReceivesSSR", 1);
+        // geometric specular anti-aliasing: bumps smaller than a pixel widen the highlight instead of sparkling as the
+        // camera moves; and occlusion also dims reflections in creases
+        m.SetFloat("_EnableGeometricSpecularAA", 1); m.SetFloat("_SpecularAAScreenSpaceVariance", 0.12f); m.SetFloat("_SpecularAAThreshold", 0.2f);
+        m.SetFloat("_SpecularOcclusionMode", 1);
         m.SetFloat("_EnergyConservingSpecularColor", 1);
         HDMaterial.ValidateMaterial(m);
         EditorUtility.SetDirty(m);

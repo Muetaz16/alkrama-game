@@ -129,7 +129,10 @@ public static class CinematicLook
         T Add<T>() where T : VolumeComponent { var c = p.Add<T>(false); c.active = true; return c; }
 
         // ACES: filmic shoulder and toe
-        Add<Tonemapping>().mode.Override(TonemappingMode.ACES);
+        // the full ACES transform (RRT + ODT), not the fitted curve: a very bright light loses its colour on the way
+        // to white the way it does on film, instead of clipping to a flat saturated patch
+        var tone = Add<Tonemapping>(); tone.mode.Override(TonemappingMode.ACES); tone.useFullACES.Override(true);
+        tone.acesPreset.Override(HDRACESPreset.ACES1000Nits); tone.detectPaperWhite.Override(true); tone.detectBrightnessLimits.Override(true);     // only used on an HDR display (-hdr)
 
         // the URP grade, value for value (exposure, saturation and filter belong to the hour: TimeOfDay)
         var ca = Add<ColorAdjustments>();
@@ -150,14 +153,14 @@ public static class CinematicLook
         var bloom = Add<Bloom>();
         bloom.threshold.Override(1.1f); bloom.intensity.Override(0.16f); bloom.scatter.Override(0.6f); bloom.tint.Override(Color.white);
         var vig = Add<Vignette>();
-        vig.mode.Override(VignetteMode.Procedural); vig.color.Override(Color.black); vig.intensity.Override(0.28f); vig.smoothness.Override(0.4f); vig.rounded.Override(false);
-        var grain = Add<FilmGrain>(); grain.type.Override(FilmGrainLookup.Thin1); grain.intensity.Override(0.22f); grain.response.Override(0.8f);
+        vig.mode.Override(VignetteMode.Procedural); vig.color.Override(Color.black); vig.intensity.Override(0.2f); vig.smoothness.Override(0.4f); vig.rounded.Override(false);
+        var grain = Add<FilmGrain>(); grain.type.Override(FilmGrainLookup.Thin1); grain.intensity.Override(0.14f); grain.response.Override(0.8f);
         var flare = Add<ScreenSpaceLensFlare>();
         flare.intensity.Override(0.55f); flare.tintColor.Override(new Color(1f, 0.93f, 0.82f));
         flare.firstFlareIntensity.Override(0.6f); flare.secondaryFlareIntensity.Override(0.35f); flare.warpedFlareIntensity.Override(0.3f);
         flare.streaksIntensity.Override(0.6f); flare.streaksLength.Override(0.45f); flare.streaksThreshold.Override(0.6f);
         flare.vignetteEffect.Override(0.8f); flare.chromaticAbberationIntensity.Override(0.5f);
-        Add<ChromaticAberration>().intensity.Override(0.04f);
+        Add<ChromaticAberration>().intensity.Override(0.03f);
         // per-object motion vectors: the gun and arms move with the camera, so they stay sharp while the street streaks a little
         var mb = Add<MotionBlur>();
         mb.intensity.Override(0.14f); mb.maximumVelocity.Override(60f); mb.minimumVelocity.Override(2f);
@@ -168,6 +171,8 @@ public static class CinematicLook
         ao.intensity.Override(1.5f); ao.radius.Override(1.2f); ao.directLightingStrength.Override(0.3f); ao.temporalAccumulation.Override(true);
         var ssr = Add<ScreenSpaceReflection>();
         ssr.enabled.Override(true); ssr.reflectSky.Override(true);
+        ssr.usedAlgorithm.Override(ScreenSpaceReflectionAlgorithm.Approximation);     // rough surfaces get a properly blurred reflection, not a mirror one faded out
+        ssr.accumulationFactor.Override(0.8f);
         var gi = Add<GlobalIllumination>();                 // screen-space bounce light: sunlit ground lights the shaded wall
         gi.enable.Override(true);
         var cs = Add<ContactShadows>();
@@ -219,7 +224,8 @@ public static class CinematicLook
         var hd = sun.GetComponent<HDAdditionalLightData>() ?? sun.gameObject.AddComponent<HDAdditionalLightData>();
         sun.lightUnit = LightUnit.Lux; sun.useColorTemperature = false; sun.shadows = LightShadows.Soft; sun.cookie = null;
         TimeOfDay.WriteSun(sun, TimeOfDay.Presets[EditorTime]);
-        hd.angularDiameter = 1.2f;                         // a little larger than the real sun: softer shadow edges with distance
+        hd.angularDiameter = 0.8f;                         // the real sun is 0.53 degrees; a little more so the penumbra reads at street distances
+        hd.dirLightPCSSMaxPenumbraSize = 0.7f; hd.dirLightPCSSBlockerSampleCount = 24; hd.dirLightPCSSFilterSampleCount = 16;
         hd.SetShadowResolutionOverride(false); hd.SetShadowResolutionLevel(2);
         hd.useContactShadow.useOverride = true; hd.useContactShadow.@override = true;
         hd.affectsVolumetric = true; hd.volumetricDimmer = 1f; hd.volumetricShadowDimmer = 1f;

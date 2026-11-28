@@ -61,7 +61,14 @@ public class GraphicsQuality : MonoBehaviour
         var cam = Camera.main;
         if (cam && cam.TryGetComponent<HDAdditionalCameraData>(out var cd)) cd.allowDynamicResolution = true;
 
+        // textures seen at a shallow angle (the paving, the road, the rifle) stay sharp into the distance
+        QualitySettings.anisotropicFiltering = AnisotropicFiltering.ForceEnable; Texture.SetGlobalAnisotropicFilteringLimits(16, 16);
+
         int start = PlayerPrefs.GetInt("benghazi_quality", DefaultLevel); var a = System.Environment.GetCommandLineArgs();
+        // HDR10 output (10 bits, wide gamut, ACES for a 1000-nit display) only when asked for with -hdr and the display offers it
+        bool wantHdr = System.Array.IndexOf(a, "-hdr") >= 0; var hdr = HDROutputSettings.main;
+        if (hdr != null && hdr.available) { hdr.RequestHDRModeChange(wantHdr); Debug.Log($"[quality] HDR display available, output {(wantHdr ? "HDR10" : "SDR (start with -hdr for HDR10)")}"); }
+        else Debug.Log("[quality] no HDR display" + (wantHdr ? " - -hdr ignored" : ""));
         bool autotest = false;
         for (int i = 0; i < a.Length; i++)
         {

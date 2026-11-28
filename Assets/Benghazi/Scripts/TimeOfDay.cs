@@ -45,7 +45,7 @@ public class TimeOfDay : MonoBehaviour
     public static readonly float[] RealSkyExposure = { 0.8f, 0.85f, 0.9f, 1.0f, 0.13f };
 
     // ---- HDRP scale (see the header)
-    public const float ExposureBase = -1.5f;          // EV100 for a preset exposure of 0. Set by eye against the URP build's pictures on the promenade
+    public const float ExposureBase = -1.05f;         // EV100 for a preset exposure of 0. Set by eye against the URP build's pictures on the promenade
                                                       // (HdrpDebug.Expo); -0.26, where HDRP's exposure multiplier is exactly 1, came out 1.3 stops under.
     public const float SunLux = Mathf.PI;             // lux per unit of the old directional-light strength
     public const float FogTop = 90f;                  // the haze thins out above the roofs (m)
