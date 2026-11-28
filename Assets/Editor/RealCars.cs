@@ -165,12 +165,21 @@ public static class RealCars
         for (int i = 0; i < b.Length; i++)
         {
             int x = i % W, y = i / W; float n1 = Noise(x, y, 22, 40), n2 = Noise(x, y, 9, 41);
-            var c = Color.Lerp(new Color(0.045f, 0.04f, 0.035f), new Color(0.32f, 0.15f, 0.07f), Mathf.SmoothStep(0.35f, 0.8f, n1));
-            if (n2 > 0.78f) c = Color.Lerp(c, new Color(0.33f, 0.32f, 0.3f), (n2 - 0.78f) * 3);
-            c *= 0.65f + 0.5f * hsv[i].z; c.a = 1; b[i] = c;
+            // A car that has burnt out is not brown all over (that reads as mud): the paint is gone and the steel is
+            // charred black-grey; where the fire was hottest the bare steel has rusted in sharp-edged orange patches
+            // with a blue-grey temper line round them; pale ash lies in fine speckles on it.
+            float n3 = Noise(x, y, 4, 42), n4 = Noise(x, y, 58, 43);
+            var charred = Color.Lerp(new Color(0.022f, 0.021f, 0.022f), new Color(0.085f, 0.082f, 0.08f), n3);
+            var rusted = Color.Lerp(new Color(0.11f, 0.045f, 0.02f), new Color(0.2f, 0.095f, 0.042f), n2);
+            float heat = Mathf.SmoothStep(0.61f, 0.69f, n1 * 0.7f + n4 * 0.3f);              // about a third of the shell, in patches with a firm edge
+            var c = Color.Lerp(charred, rusted, heat * Mathf.Lerp(0.55f, 1f, n3));
+            float rim = 1f - Mathf.Abs(Mathf.InverseLerp(0.56f, 0.66f, n1 * 0.7f + n4 * 0.3f) - 0.5f) * 2f;
+            if (rim > 0) c = Color.Lerp(c, new Color(0.09f, 0.1f, 0.13f), rim * 0.55f);          // heat-blued steel at the edge of the rust
+            float ash = n2 * n3; if (ash > 0.5f) c = Color.Lerp(c, new Color(0.3f, 0.3f, 0.29f), Mathf.Clamp01((ash - 0.56f) * 5f) * 0.4f);
+            c *= 0.6f + 0.3f * hsv[i].z; c.a = 1; b[i] = c;          // in the lighter URP exposure and haze the shell read rust-brown: darker, less rust
         }
         Holes(b, W, H, rnd, 60);
-        m.burnt = Save($"{m.name}_burnt", b, W, H, 0.06f, 0.15f);
+        m.burnt = Save($"{m.name}_burnt", b, W, H, 0.03f, 0f);          // dead matt: soot and scale do not shine
     }
 
     // bullet holes: dark core, bright bare-metal ring

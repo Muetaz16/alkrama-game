@@ -268,15 +268,15 @@ public static class CinematicLook
         // shade takes a trace of the sky, sun keeps a trace of warmth: what daylight does, well short of teal/orange
         var smh = Get<ShadowsMidtonesHighlights>(profile);
         // the cinema split: shade a little cool, sunlight a little warm
-        smh.shadows.Override(new Vector4(0.95f, 0.99f, 1.05f, -0.02f));
+        smh.shadows.Override(new Vector4(0.9f, 1.0f, 1.06f, -0.02f));      // cold, slightly green shade
         smh.midtones.Override(new Vector4(1f, 1f, 1f, 0f));
-        smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.95f, 0f));
+        smh.highlights.Override(new Vector4(1.07f, 1.0f, 0.9f, 0f));     // warm sunlit surfaces
         smh.shadowsStart.Override(0f); smh.shadowsEnd.Override(0.3f);
         smh.highlightsStart.Override(0.55f); smh.highlightsEnd.Override(1f);
 
         // blacks a touch deeper, mids held; neutral in colour
         var lgg = Get<LiftGammaGain>(profile);
-        lgg.lift.Override(new Vector4(1f, 1f, 1f, 0.012f));        // keep detail in the blacks (gun, gloves, arches)
+        lgg.lift.Override(new Vector4(0.98f, 1f, 1.03f, 0.03f));        // keep detail in the blacks (gun, gloves, arches)
         lgg.gamma.Override(new Vector4(1f, 1f, 1f, 0.06f));
         lgg.gain.Override(new Vector4(1f, 1f, 1f, 0f));
 
@@ -291,10 +291,10 @@ public static class CinematicLook
 
         // bloom only from what is really hot (sky, glints, muzzle flash, white plaster in full sun)
         var bloom = Get<Bloom>(profile);
-        bloom.threshold.Override(1.3f);       // gamma space: about 1.8 in linear light
-        bloom.intensity.Override(0.28f);
-        bloom.scatter.Override(0.6f);
-        bloom.tint.Override(Color.white);
+        bloom.threshold.Override(1.0f);       // gamma space: about 1.8 in linear light
+        bloom.intensity.Override(0.2f);
+        bloom.scatter.Override(0.72f);
+        bloom.tint.Override(new Color(1f, 0.96f, 0.9f));
         bloom.highQualityFiltering.Override(true);
         bloom.downscale.Override(BloomDownscaleMode.Half);
         bloom.maxIterations.Override(6);
@@ -302,14 +302,14 @@ public static class CinematicLook
         var vig = Get<Vignette>(profile);
         vig.color.Override(Color.black);
         vig.center.Override(new Vector2(0.5f, 0.5f));
-        vig.intensity.Override(0.28f);
+        vig.intensity.Override(0.26f);
         vig.smoothness.Override(0.4f);
         vig.rounded.Override(false);
 
         var grain = Get<FilmGrain>(profile);
-        grain.type.Override(FilmGrainLookup.Thin1);
-        grain.intensity.Override(0.22f);
-        grain.response.Override(0.8f);        // grain mostly in shade and midtones, like film
+        grain.type.Override(FilmGrainLookup.Medium1);
+        grain.intensity.Override(0.2f);
+        grain.response.Override(0.75f);        // grain mostly in shade and midtones, like film
 
         // light that floods the lens when the sun (or a muzzle flash, a fire) is in the picture: a soft
         // ghost and a short streak, kept low - it should be felt, not noticed
@@ -327,7 +327,7 @@ public static class CinematicLook
         var mb = Get<MotionBlur>(profile);
         mb.mode.Override(MotionBlurMode.CameraAndObjects);
         mb.quality.Override(MotionBlurQuality.Medium);
-        mb.intensity.Override(0.14f);
+        mb.intensity.Override(0.22f);
         mb.clamp.Override(0.03f);
 
         // depth of field belongs to WeaponController.AimFocus (it switches mode and focus distance at run time).

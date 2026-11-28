@@ -169,8 +169,9 @@ public class TimeOfDay : MonoBehaviour
             if (sky.HasProperty("_Exposure")) sky.SetFloat("_Exposure", (real ? RealSkyExposure[skyShown] : p.skyExposure) * dip);
         }
         RenderSettings.ambientIntensity = p.skyLight; RenderSettings.reflectionIntensity = Mathf.Clamp01(p.skyLight);
-        RenderSettings.fogColor = p.haze; RenderSettings.fogDensity = p.hazeDensity;
-        grade.postExposure.value = p.exposure; grade.saturation.value = p.saturation; grade.colorFilter.value = p.filter;
+        RenderSettings.fogColor = p.haze; RenderSettings.fogDensity = p.hazeDensity * 1.25f;
+        // documentary look: every time of day a little under, drained of colour, with more dust in the air
+        grade.postExposure.value = p.exposure - 0.03f; grade.saturation.value = p.saturation - 10f; grade.colorFilter.value = p.filter;
     }
 
     // the sky's own light and the reflections are worked out from the sky: do it again when the sky has changed
