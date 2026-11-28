@@ -44,7 +44,9 @@ public class PlayerHealth : MonoBehaviour
         // the sea: water up to the chest (or deeper) uses up your breath, then you drown
         float depth = waterLevel - transform.position.y;
         InWater = depth > 0.95f;
-        if (InWater) Breath = Mathf.Max(0, Breath - dt / breathSeconds);
+        // he swims: breath is only used with the head under (pulled down, or dead weight); on the surface it comes back
+        bool under = InWater && Camera.main && Camera.main.transform.position.y < waterLevel - 0.02f && !(pc && pc.Swimming);
+        if (under) Breath = Mathf.Max(0, Breath - dt / breathSeconds);
         else Breath = Mathf.Min(1, Breath + dt / 3f);
         if (InWater && Breath <= 0) Hurt(drownDamage * dt, transform.position, "drowned", true);
 
@@ -128,13 +130,13 @@ public class PlayerHealth : MonoBehaviour
         GUI.DrawTexture(new Rect(bx, by, bw * Mathf.Clamp01(Health / maxHealth), 14), white);
         Label(new Rect(bx + bw + 10, by - 6, 200, 30), $"{Mathf.CeilToInt(Health)}", small, Color.white);
         // breath bar while in the water
-        if (InWater || Breath < 0.999f)
+        if (Breath < 0.999f)
         {
             float cw = w * 0.24f, cx = (w - cw) / 2, cy = h * 0.74f;
             GUI.color = new Color(0, 0, 0, 0.55f); GUI.DrawTexture(new Rect(cx - 2, cy - 2, cw + 4, 16), white);
             GUI.color = Breath > 0.3f ? new Color(0.35f, 0.7f, 1f) : new Color(1f, 0.35f, 0.25f);
             GUI.DrawTexture(new Rect(cx, cy, cw * Breath, 12), white);
-            Label(new Rect(cx, cy - 34, cw, 30), Breath > 0 ? "BREATH  -  get out of the water" : "DROWNING", new GUIStyle(small) { alignment = TextAnchor.MiddleCenter }, Color.white);
+            Label(new Rect(cx, cy - 34, cw, 30), Breath > 0 ? "BREATH" : "DROWNING", new GUIStyle(small) { alignment = TextAnchor.MiddleCenter }, Color.white);
         }
         if (Time.time < feedUntil) Label(new Rect(0, h * 0.3f, w, 50), feed, mid, new Color(1f, 0.85f, 0.3f));
         if (Dead)

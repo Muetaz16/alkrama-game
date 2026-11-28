@@ -1,4 +1,4 @@
-﻿// Street-level realism for the Corniche, placed from the real OSM streets and building footprints
+// Street-level realism for the Corniche, placed from the real OSM streets and building footprints
 // (benghazi_corniche.json) and checked against the actual city with ray casts:
 //   streets: kerbs (black/white on the main roads), raised sidewalks, worn lane markings, cracks,
 //            asphalt patches, manholes, shell craters, sand drifting against the kerbs
@@ -89,8 +89,8 @@ public static partial class CityDetail
         int n = 0;
         foreach (Transform t in city.GetComponentsInChildren<Transform>(true))
         {
-            if (t.childCount != 7) continue;
-            var rs = t.GetComponentsInChildren<MeshRenderer>(true); if (rs.Length != 7) continue;
+            if (t.childCount < 6 || t.childCount > 7) continue;       // body, cabin, wheels: seven boxes, or six where one wheel was left out (the car on the roundabout)
+            var rs = t.GetComponentsInChildren<MeshRenderer>(true); if (rs.Length != t.childCount) continue;
             var b = rs[0].bounds; foreach (var r in rs) b.Encapsulate(r.bounds);
             float horiz = Mathf.Max(b.size.x, b.size.z);
             if (horiz < 3.6f || horiz > 5.2f || b.size.y < 1.0f || b.size.y > 2.1f) continue;

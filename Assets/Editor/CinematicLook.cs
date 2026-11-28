@@ -1,4 +1,4 @@
-﻿// Cinematic rendering pass: configuration only. Nothing in the scene is deleted or regenerated, no new assets.
+// Cinematic rendering pass: configuration only. Nothing in the scene is deleted or regenerated, no new assets.
 //   Unity.exe -batchmode -quit -projectPath <proj> -executeMethod CinematicLook.Run
 //
 // What it touches (all found, never created, except post-FX overrides inside the existing profile):
@@ -159,7 +159,7 @@ public static class CinematicLook
         pc.upscalingFilter = UpscalingFilterSelection.Auto;
         // grading in HDR, before the tonemapper: highlights roll off instead of clipping
         log.Add(D("grading", pc.colorGradingMode, ColorGradingMode.HighDynamicRange)); pc.colorGradingMode = ColorGradingMode.HighDynamicRange;
-        log.Add(D("LUT", pc.colorGradingLutSize, 32)); pc.colorGradingLutSize = 32;
+        log.Add(D("LUT", pc.colorGradingLutSize, 64)); pc.colorGradingLutSize = 64;       // finer grade steps: no banding in skies and in the night
         pc.supportsCameraDepthTexture = true;      // the water shader and SSAO read it
         // no shader here reads _CameraOpaqueTexture (Benghazi/Water does not refract), so no extra full-screen copy
         log.Add(D("opaque texture", pc.supportsCameraOpaqueTexture, false)); pc.supportsCameraOpaqueTexture = false;
@@ -311,6 +311,13 @@ public static class CinematicLook
         grain.intensity.Override(0.22f);
         grain.response.Override(0.8f);        // grain mostly in shade and midtones, like film
 
+        // light that floods the lens when the sun (or a muzzle flash, a fire) is in the picture: a soft
+        // ghost and a short streak, kept low - it should be felt, not noticed
+        var flare = Get<ScreenSpaceLensFlare>(profile);
+        flare.intensity.Override(0.55f); flare.tintColor.Override(new Color(1f, 0.93f, 0.82f));
+        flare.firstFlareIntensity.Override(0.6f); flare.secondaryFlareIntensity.Override(0.35f); flare.warpedFlareIntensity.Override(0.3f);
+        flare.streaksIntensity.Override(0.6f); flare.streaksLength.Override(0.45f); flare.streaksThreshold.Override(0.6f);
+        flare.vignetteEffect.Override(0.8f); flare.chromaticAbberationIntensity.Override(0.5f);
         var chroma = Get<ChromaticAberration>(profile);
         chroma.intensity.Override(0.04f);     // barely there: only the frame corners
 

@@ -147,6 +147,13 @@ public class AutoTest : MonoBehaviour
         yield return null;
     }
 
+    // the same, looking at the soldier's body from outside: from / at are in the player's own space (x right, y up, z ahead)
+    IEnumerator InspectBody(string file, Vector3 from, Vector3 at)
+    {
+        var mt = Camera.main.transform; var pt = player.transform;
+        yield return Inspect(file, mt.InverseTransformPoint(pt.TransformPoint(from)), mt.InverseTransformPoint(pt.TransformPoint(at)));
+    }
+
     // point the camera at a world position
     void LookAt(Vector3 p)
     {
@@ -175,6 +182,8 @@ public class AutoTest : MonoBehaviour
         log.WriteLine("right shoulder: " + gun.View.ArmsDebug());
         yield return Inspect("inspect_grip_ready.png", GripFrom, GripAt);
         log.WriteLine("ready, " + gun.View.TriggerDebug());
+        log.WriteLine("ready, " + gun.View.ShoulderDebug());
+        yield return Inspect("inspect_shoulder.png", new Vector3(0.5f, 0.12f, -0.25f), new Vector3(0.06f, -0.2f, 0.12f));
         log.WriteLine(gun.View.HandleDebug());
         gun.aimHeld = true;
         yield return new WaitForSeconds(0.6f);
@@ -478,6 +487,12 @@ public class AutoTest : MonoBehaviour
         hp.Damage(200f, from);
         yield return new WaitForSeconds(0.7f);
         yield return Shot("death_falling.png");
+        var gunD = player.GetComponent<WeaponController>();
+        yield return new WaitForSeconds(0.25f);
+        yield return Shot("death_support_hand_gone.png");            // about 1 s in: the support hand has dropped, the rifle sags in one hand
+        log.WriteLine($"player death, {gunD.View.DeadT:F1} s in: support hand off, firing hand still on");
+        yield return new WaitForSeconds(0.75f);
+        yield return Shot("death_rifle_released.png");               // about 1.7 s in: the firing hand has let go
         log.WriteLine($"player death: dead {hp.Dead}, view {HitFeedback.DeathView:F2} of the way down, eye {Camera.main.transform.position.y - player.transform.position.y:F2} m above the ground, roll {Camera.main.transform.eulerAngles.z:F0} deg");
         yield return new WaitForSeconds(1.6f);
         yield return Shot("death_fade.png");
@@ -732,32 +747,72 @@ public class AutoTest : MonoBehaviour
         log.Flush();
     }
 
-    // walk into the sea: the breath bar should run out and the player drown
-    IEnumerator Drown()
+    // into the sea on his own feet: wade until the water is at his chest, then swim - rifle on his back,
+    // head above water, no drowning - out to sea, back, and out onto the sand again
+    IEnumerator Swim()
     {
-        var hp = player.GetComponent<PlayerHealth>(); if (!hp) yield break;
+        var hp = player.GetComponent<PlayerHealth>(); var gun = player.GetComponent<WeaponController>(); if (!hp || !gun) yield break;
         var cc = player.GetComponent<CharacterController>();
-        Vector3 sea = Vector3.zero; bool ok = false;
-        for (float rad = 20; rad < 260 && !ok; rad += 15)
-            for (int k = 0; k < 16 && !ok; k++)
-            {
-                var p = player.transform.position + Quaternion.Euler(0, k * 22.5f, 0) * Vector3.forward * rad;
-                if (Physics.Raycast(new Vector3(p.x, 6, p.z), Vector3.down, out var g, 30f) && g.point.y < -2.5f && g.point.y > -8f) { sea = g.point; ok = true; }
-            }
-        if (!ok) { log.WriteLine("drown: no sea found"); yield break; }
-        cc.enabled = false; player.transform.position = sea + Vector3.up * 0.1f; cc.enabled = true;
-        player.moveInput = Vector2.zero;
-        hp.invulnerable = true;                     // only the water can kill him here
-        float t0 = Time.time;
-        yield return new WaitForSeconds(4f);
-        yield return Shot("drown_breath.png");
-        log.WriteLine($"in the sea at depth {sea.y:F1}: in water {hp.InWater}, breath {hp.Breath:F2}, health {hp.Health:F0} after 4 s");
-        while (!hp.Dead && Time.time - t0 < 25f) yield return null;
-        yield return new WaitForSeconds(0.5f);
-        yield return Shot("drown_dead.png");
-        log.WriteLine($"drowned {hp.Dead} ({hp.LastDeath}) after {Time.time - t0:F1} s in the water");
-        yield return new WaitForSeconds(4.5f);
-        log.WriteLine($"respawned: dead {hp.Dead}, health {hp.Health:F0}, pos {player.transform.position}");
+        // a spot on the dry sand, and the way to the water from it (the beach meshes the seafront generator made)
+        Vector3 sand = Vector3.zero, toSea = Vector3.zero; bool ok = false;
+        var dry = GameObject.Find("Beach dry"); var wet = GameObject.Find("Beach wet");
+        if (dry && wet)
+        {
+            float sd = 1e9f;
+            foreach (var v in dry.GetComponent<MeshFilter>().sharedMesh.vertices) { var w = dry.transform.TransformPoint(v); float d = Vector3.Distance(w, startPos); if (w.y > 0.15f && w.y < 0.55f && d < sd) { sd = d; sand = w; } }      // low on the beach, past the sea wall and its rail
+            Vector3 edge = sand; float ed = 1e9f;
+            foreach (var v in wet.GetComponent<MeshFilter>().sharedMesh.vertices) { var w = wet.transform.TransformPoint(v); float d = Vector3.Distance(w, sand); if (d < ed) { ed = d; edge = w; } }
+            toSea = Vector3.ProjectOnPlane(edge - sand, Vector3.up).normalized; ok = sd < 1e8f && toSea != Vector3.zero;
+            // make sure that way really gets deep
+            if (ok) { var q = sand + toSea * (ed + 25f); ok = !Physics.Raycast(new Vector3(q.x, 8, q.z), Vector3.down, out var g2, 40f) || g2.point.y < -1.8f; if (!ok) log.WriteLine($"swim: 25 m past the water's edge the bottom is at {g2.point.y:F1}"); }
+        }
+        if (!ok) { log.WriteLine("swim: no beach found"); yield break; }
+        hp.invulnerable = true;
+        // stand clear of the sea wall the sand runs up to: a few metres down the beach, on whatever is underfoot there
+        var down = sand + toSea * 5f;
+        if (Physics.Raycast(new Vector3(down.x, 6, down.z), Vector3.down, out var gs, 12f) && gs.point.y > PlayerController.WaterLevel) sand = gs.point;
+        log.WriteLine($"swim: starting on the sand at {sand}, the sea towards {toSea}");
+        cc.enabled = false; player.transform.position = sand + Vector3.up * 0.1f; cc.enabled = true;
+        cam.yaw = Mathf.Atan2(toSea.x, toSea.z) * Mathf.Rad2Deg; cam.pitch = 6f;
+        gun.switchTo = 0; yield return new WaitForSeconds(0.6f);
+        player.moveInput = Vector2.up; float t0 = Time.time, wadeDepth = 0, swamAt = -1; bool shotWade = false;
+        while (Time.time - t0 < 30f && !player.Swimming)
+        {
+            wadeDepth = player.WaterDepth;
+            if (!shotWade && wadeDepth > 0.7f) { shotWade = true; yield return Shot("swim_wading.png"); }
+            yield return null;
+        }
+        swamAt = Time.time - t0;
+        log.WriteLine($"swim: walked in for {swamAt:F1} s, water {wadeDepth:F2} m up him when he started to swim (swimming {player.Swimming})");
+        yield return new WaitForSeconds(1.2f);
+        var a0 = player.transform.position; float sw0 = Time.time;
+        yield return new WaitForSeconds(2.5f);
+        yield return Shot("swim_fp.png");
+        float v1 = Vector3.Distance(a0, player.transform.position) / (Time.time - sw0);
+        player.sprint = true; var a1 = player.transform.position; sw0 = Time.time;
+        yield return new WaitForSeconds(3f);
+        float v2 = Vector3.Distance(a1, player.transform.position) / (Time.time - sw0);
+        yield return Shot("swim_fp_fast.png");
+        float eyeAbove = Camera.main.transform.position.y - PlayerController.WaterLevel;
+        log.WriteLine($"swim: {v1:F2} m/s, sprinting {v2:F2} m/s; eyes {eyeAbove:F2} m above the water, rifle slung {gun.RifleSlung}, breath {hp.Breath:F2}, health {hp.Health:F0}, dead {hp.Dead}");
+        gun.fireHeld = true; int mag0 = gun.W.mag; yield return new WaitForSeconds(0.4f); gun.fireHeld = false;
+        log.WriteLine($"swim: tried to fire in the water: rounds used {mag0 - gun.W.mag} (must be 0)");
+        player.sprint = false;
+        gun.SetView(false); yield return new WaitForSeconds(1.2f);
+        yield return Shot("swim_tp.png");
+        for (int i = 0; i < 4; i++) { yield return InspectBody($"swim_side_{i}.png", new Vector3(2.6f, 2.0f, 0.2f), new Vector3(0f, 1.25f, -0.2f)); yield return new WaitForSeconds(0.3f); }
+        gun.SetView(true);
+        // a long float: he must not drown
+        player.moveInput = Vector2.zero; yield return new WaitForSeconds(9f);
+        log.WriteLine($"swim: after 9 s treading water: breath {hp.Breath:F2}, health {hp.Health:F0}, dead {hp.Dead}");
+        yield return Shot("swim_treading.png");
+        // back to the beach
+        cam.yaw += 180f; player.moveInput = Vector2.up; player.sprint = true; t0 = Time.time;
+        while (Time.time - t0 < 40f && (player.Swimming || player.WaterDepth > 0.05f)) yield return null;
+        player.sprint = false; yield return new WaitForSeconds(0.8f); player.moveInput = Vector2.zero;
+        yield return new WaitForSeconds(0.6f);
+        yield return Shot("swim_ashore.png");
+        log.WriteLine($"swim: back on the sand after {Time.time - t0:F1} s: swimming {player.Swimming}, rifle slung {gun.RifleSlung}, water depth {player.WaterDepth:F2}, health {hp.Health:F0}");
         log.Flush();
     }
 
@@ -815,6 +870,32 @@ public class AutoTest : MonoBehaviour
     {
         yield return new WaitForSeconds(1.5f);
         var health = player.GetComponent<PlayerHealth>(); if (health) health.invulnerable = true;
+        if (System.Environment.CommandLine.Contains("-swimonly"))
+        {
+            foreach (var en in EnemyAI.All.ToArray()) if (en) Destroy(en.gameObject);
+            var sp1 = FindFirstObjectByType<EnemySpawner>(); if (sp1) sp1.enabled = false;
+            var w1 = player.GetComponent<WeaponController>(); if (w1) w1.externalInput = true;
+            yield return Swim();
+            log.WriteLine("done"); log.Close();
+            Application.Quit(); yield break;
+        }
+        if (System.Environment.CommandLine.Contains("-timeshots"))
+        {
+            // the same two views at each time of day
+            foreach (var en in EnemyAI.All.ToArray()) if (en) Destroy(en.gameObject);
+            var sp0 = FindFirstObjectByType<EnemySpawner>(); if (sp0) sp0.enabled = false;
+            for (int i = 0; i < TimeOfDay.Presets.Length; i++)
+            {
+                TimeOfDay.Set(i, true);
+                cam.yaw = startYaw; cam.pitch = 2f; yield return new WaitForSeconds(1.2f);
+                yield return Shot($"time_{i}_{TimeOfDay.Presets[i].name.ToLowerInvariant()}.png");
+                cam.yaw = startYaw + 150f; yield return new WaitForSeconds(0.8f);
+                yield return Shot($"time_{i}_{TimeOfDay.Presets[i].name.ToLowerInvariant()}_b.png");
+                log.WriteLine($"time of day {TimeOfDay.Name}: sun {RenderSettings.sun.intensity:F2} at {Vector3.Angle(-RenderSettings.sun.transform.forward, Vector3.ProjectOnPlane(-RenderSettings.sun.transform.forward, Vector3.up)):F0} deg up, sky light {RenderSettings.ambientIntensity:F2}, {1f / Time.smoothDeltaTime:F0} fps");
+            }
+            log.WriteLine("done"); log.Close();
+            Application.Quit(); yield break;
+        }
         if (System.Environment.CommandLine.Contains("-gaitonly"))
         {
             // just the legs: third person, the clips' own paces, then each way of moving with the foot-slip measure
@@ -862,10 +943,19 @@ public class AutoTest : MonoBehaviour
         yield return Step("idle", Vector2.zero, 1f);
         yield return Step("walk", Vector2.up, 2f, walk: true);
         yield return Shot("play_walk.png");
+        log.WriteLine($"third person, ready: butt plate {PlayerBodyPose.LastButtGap * 100:F1} cm from the shoulder pocket");
+        yield return InspectBody("tp_stance_front.png", new Vector3(0.7f, 1.5f, 2.3f), new Vector3(0.05f, 1.3f, 0f));
+        yield return InspectBody("tp_stance_side.png", new Vector3(2.2f, 1.45f, 0.5f), new Vector3(0f, 1.3f, 0.3f));
+        player.aiming = true; var wA = player.GetComponent<WeaponController>(); if (wA) wA.aimHeld = true;
+        yield return new WaitForSeconds(0.5f);
+        yield return InspectBody("tp_stance_aiming.png", new Vector3(1.6f, 1.6f, 1.6f), new Vector3(0.05f, 1.35f, 0.2f));
+        if (wA) wA.aimHeld = false;
         yield return Step("run", Vector2.up, 2f);
         yield return Shot("play_run.png");
         yield return Step("sprint", Vector2.up, 2f, sprint: true);
         yield return Shot("fp_sprint.png");
+        yield return InspectBody("tp_sprint_carry.png", new Vector3(2.0f, 1.5f, 1.8f), new Vector3(0f, 1.3f, 0.2f));
+        log.WriteLine($"third person, sprint: rifle carried up, butt plate {PlayerBodyPose.LastButtGap * 100:F1} cm from the top of the shoulder");
         yield return Step("strafe left", Vector2.left, 1.5f);
         yield return Shot("play_strafe.png");
         yield return Step("back", Vector2.down, 1.5f);
@@ -887,7 +977,7 @@ public class AutoTest : MonoBehaviour
         yield return BuildingGlass();
         yield return Showcase();
         yield return Wounds();
-        yield return Drown();
+        yield return Swim();
         log.WriteLine("done"); log.Close();
         Application.Quit();
     }
