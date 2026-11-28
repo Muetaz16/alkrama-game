@@ -248,7 +248,7 @@ MonoBehaviour:
     supportTransparentBackface: 0
     supportTransparentDepthPrepass: 1
     supportTransparentDepthPostpass: 0
-    colorBufferFormat: 74
+    colorBufferFormat: 48
     depthBufferFormat: 0
     supportCustomPass: 0
     supportVariableRateShading: 1
@@ -320,7 +320,7 @@ MonoBehaviour:
       maxShadowRequests: 128
       directionalShadowsDepthBits: 32
       punctualShadowFilteringQuality: 1
-      directionalShadowFilteringQuality: 1
+      directionalShadowFilteringQuality: 2
       areaShadowFilteringQuality: 0
       punctualLightShadowAtlas:
         shadowAtlasResolution: 4096
@@ -362,9 +362,9 @@ MonoBehaviour:
           m_Id: With3Levels
       perChannelMask: 0
     postProcessSettings:
-      m_LutSize: 32
+      m_LutSize: 65
       lutFormat: 48
-      bufferFormat: 74
+      bufferFormat: 48
     dynamicResolutionSettings:
       enabled: 1
       useMipBias: 1
