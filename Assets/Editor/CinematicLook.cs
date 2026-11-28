@@ -182,6 +182,10 @@ public static class CinematicLook
         sh.maxShadowDistance.Override(ShadowDistance); sh.cascadeShadowSplitCount.Override(4);
         sh.cascadeShadowSplit0.Override(CascadeSplits.x); sh.cascadeShadowSplit1.Override(CascadeSplits.y); sh.cascadeShadowSplit2.Override(CascadeSplits.z);
         var water = Add<WaterRendering>(); water.enable.Override(true);
+        // ray tracing (RT quality level only): the scene kept for tracing is what lies within 180 m of the camera
+        var rts = Add<RayTracingSettings>();
+        rts.buildMode.Override(RTASBuildMode.Automatic); rts.cullingMode.Override(RTASCullingMode.Sphere); rts.cullingDistance.Override(180f);
+        rts.rayBias.Override(0.004f); rts.distantRayBias.Override(0.01f);
 
         Store(p);
         GlobalVolume("Post FX", 0, p);

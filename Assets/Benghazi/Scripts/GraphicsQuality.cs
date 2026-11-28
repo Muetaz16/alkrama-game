@@ -5,8 +5,8 @@ using UnityEngine.Rendering;
 using UnityEngine.Rendering.HighDefinition;
 
 // Picture quality for the HDRP build, switched while the game runs.
-//   F8                 next level (LOW -> MEDIUM -> HIGH -> ULTRA)
-//   -quality <name>    start at low | medium | high | ultra
+//   F8                 next level (LOW -> MEDIUM -> HIGH -> ULTRA -> RT, RT only where the card can do it)
+//   -quality <name>    start at low | medium | high | ultra | rt
 //   -novsync           do not wait for the monitor (to measure the real frame rate)
 //   -fpslog            write the frame rate to the player log every 5 seconds
 // A level is: how many pixels are drawn before the temporal upscaler brings the picture back to the window's
@@ -22,6 +22,7 @@ public class GraphicsQuality : MonoBehaviour
         public int shadowLevel; public float shadowDistance;   // 0..3 = 1024 / 2048 / 2048 / 4096 for the sun
         public bool ssr, ssgi, contact, volumetric; public int effects;    // 0..2 quality of the screen-space effects
         public float aoIntensity; public bool motionBlur;
+        public bool rt;                                       // reflections and bounce light by ray tracing (needs an RTX-class card)
     }
     public static readonly Level[] Levels =
     {
@@ -29,6 +30,9 @@ public class GraphicsQuality : MonoBehaviour
         new Level { name = "MEDIUM", scale = 85,  shadowLevel = 1, shadowDistance = 120, ssr = true,  ssgi = false, contact = true,  volumetric = true,  effects = 0, aoIntensity = 1.4f, motionBlur = true },
         new Level { name = "HIGH",   scale = 100, shadowLevel = 2, shadowDistance = 150, ssr = true,  ssgi = true,  contact = true,  volumetric = true,  effects = 1, aoIntensity = 1.5f, motionBlur = true },
         new Level { name = "ULTRA",  scale = 100, shadowLevel = 3, shadowDistance = 180, ssr = true,  ssgi = true,  contact = true,  volumetric = true,  effects = 2, aoIntensity = 1.6f, motionBlur = true },
+        // HIGH with the two screen-space effects replaced by ray tracing: a reflection shows what is behind the camera
+        // or hidden by the gun, and light bounces off surfaces that are not on screen
+        new Level { name = "RT",     scale = 100, shadowLevel = 2, shadowDistance = 150, ssr = true,  ssgi = true,  contact = true,  volumetric = true,  effects = 1, aoIntensity = 1.5f, motionBlur = true, rt = true },
     };
     public const int DefaultLevel = 2;
 
@@ -88,14 +92,22 @@ public class GraphicsQuality : MonoBehaviour
         return -1;
     }
 
+    /// <summary>Is ray tracing there to be used: built into the player and offered by this card and driver?</summary>
+    public static bool RayTracingReady => SystemInfo.supportsRayTracing && RenderPipelineManager.currentPipeline is HDRenderPipeline hd && hd.rayTracingSupported;
+
     public static void Set(int index, bool label = true)
     {
         if (!inst) return;
-        index = Mathf.Clamp(index, 0, Levels.Length - 1); Current = index; var l = Levels[index];
+        index = Mathf.Clamp(index, 0, Levels.Length - 1);
+        if (Levels[index].rt && !RayTracingReady) { Debug.Log("[quality] RT asked for, but ray tracing is not available on this machine: HIGH instead"); index = DefaultLevel; }
+        Current = index; var l = Levels[index];
         scale = l.scale;
         var i = inst;
         i.ssr.enabled.Override(l.ssr); i.ssr.quality.Override(l.effects);
         i.gi.enable.Override(l.ssgi); i.gi.quality.Override(l.effects); i.gi.fullResolutionSS.Override(l.effects >= 2);
+        var cast = l.rt ? RayCastingMode.RayTracing : RayCastingMode.RayMarching;
+        i.ssr.tracing.Override(cast); i.ssr.mode.Override(RayTracingMode.Performance);
+        i.gi.tracing.Override(cast); i.gi.mode.Override(RayTracingMode.Performance);
         i.contact.enable.Override(l.contact); i.contact.quality.Override(l.effects);
         i.fog.enableVolumetricFog.Override(l.volumetric);
         i.fog.fogControlMode = FogControl.Balance; i.fog.volumetricFogBudget = l.effects == 0 ? 0.22f : l.effects == 1 ? 0.33f : 0.5f; i.fog.resolutionDepthRatio = 0.6f;
@@ -108,13 +120,17 @@ public class GraphicsQuality : MonoBehaviour
         if (sun && sun.TryGetComponent<HDAdditionalLightData>(out var hd)) { hd.SetShadowResolutionOverride(false); hd.SetShadowResolutionLevel(l.shadowLevel); }
         PlayerPrefs.SetInt("benghazi_quality", index);
         if (label) i.labelUntil = Time.unscaledTime + 3f;
-        Debug.Log($"[quality] {l.name}: render scale {l.scale:F0} %, sun shadow level {l.shadowLevel} to {l.shadowDistance:F0} m, SSR {l.ssr}, SSGI {l.ssgi}, contact shadows {l.contact}, volumetric fog {l.volumetric}");
+        Debug.Log($"[quality] {l.name}: render scale {l.scale:F0} %, sun shadow level {l.shadowLevel} to {l.shadowDistance:F0} m, SSR {l.ssr}, SSGI {l.ssgi}, contact shadows {l.contact}, volumetric fog {l.volumetric}, ray tracing {l.rt}");
     }
 
     void Update()
     {
         var k = Keyboard.current;
-        if (k != null && k.f8Key.wasPressedThisFrame) Set((Current + 1) % Levels.Length);
+        if (k != null && k.f8Key.wasPressedThisFrame)
+        {
+            int next = (Current + 1) % Levels.Length; if (Levels[next].rt && !RayTracingReady) next = (next + 1) % Levels.Length;
+            Set(next);
+        }
         // frame rate: mean, and the mean of the slowest 1 % of frames
         float dt = Time.unscaledDeltaTime; fpsT += dt; fpsN++; frames.Add(dt);
         if (fpsT >= 5f)

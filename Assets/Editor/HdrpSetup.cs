@@ -86,7 +86,9 @@ public static class HdrpSetup
         s.supportMotionVectors = true; s.supportScreenSpaceLensFlare = true; s.supportDataDrivenLensFlare = false;
         s.supportDistortion = false; s.supportSubsurfaceScattering = false;
         s.supportTransparentBackface = false; s.supportTransparentDepthPrepass = true; s.supportTransparentDepthPostpass = false;
-        s.supportRayTracing = false;                       // off: not affordable at 60 fps on a laptop RTX 4050
+        // the optional "RT" quality level (GraphicsQuality) needs this; it falls back to HIGH while it is off
+        s.supportRayTracing = false;      // TRIED 28 Nov 2026 AND SWITCHED OFF: with it on, the glTFast shader graph (the city's 5,900 materials) fails to compile its ray-tracing
+        // passes, the editor lost the GPU device during the player build, and the player reported ray tracing unavailable. See HDRP_REPORT.md.
         s.supportCustomPass = false; s.supportRuntimeAOVAPI = false; s.supportTerrainHole = false;
         s.lightProbeSystem = RenderPipelineSettings.LightProbeSystem.LegacyLightProbes;
         // sun shadows: the light picks Low..Ultra at run time (GraphicsQuality)
