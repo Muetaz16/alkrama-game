@@ -75,7 +75,7 @@ public static class HdrpSetup
         s.supportSSR = true; s.supportSSRTransparent = false;
         s.supportSSAO = true; s.supportSSGI = true;
         s.supportVolumetrics = true; s.supportVolumetricClouds = false;
-        s.supportWater = true; s.supportWaterDecals = false; s.supportWaterExclusion = false;
+        s.supportWater = true; s.supportWaterDecals = true; s.maximumWaterDecalCount = 128; s.supportWaterExclusion = false;     // decals: the surf along the shore
         s.waterSimulationResolution = WaterSimulationResolution.Medium128;
         s.supportDecals = true; s.supportDecalLayers = false;
         s.supportMotionVectors = true; s.supportScreenSpaceLensFlare = true; s.supportDataDrivenLensFlare = false;

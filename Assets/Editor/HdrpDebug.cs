@@ -33,8 +33,13 @@ public static class HdrpDebug
         cam.transform.rotation = Quaternion.LookRotation(-sun.transform.forward); SceneBuilder.Shoot(cam, "dbg_3_sun.png");
         var lh = SceneBuilder.FindLighthouse(); var seaDir = CityDetail.SeaDirection();
         cam.transform.position = lh + seaDir * 48f + Vector3.Cross(Vector3.up, seaDir) * 14f + Vector3.up * 1.7f; cam.transform.LookAt(lh + Vector3.up * 9f); SceneBuilder.Shoot(cam, "dbg_4_lighthouse.png");
-        if (CityDetail.ReviewViews.Count > 0) { var v = CityDetail.ReviewViews[0]; cam.transform.position = v.eye; cam.transform.LookAt(v.at); SceneBuilder.Shoot(cam, "dbg_5_street.png"); }
-        else { cam.transform.position = at + Vector3.up * 1.62f - fwd * 2f + Vector3.Cross(Vector3.up, fwd) * 60f; cam.transform.rotation = Quaternion.LookRotation(Vector3.Cross(Vector3.up, fwd)); SceneBuilder.Shoot(cam, "dbg_5_street.png"); }
+        // the surf: the nearest foam patch, seen from the land side and from above
+        var foam = GameObject.Find("Shore foam");
+        if (foam && foam.transform.childCount > 0)
+        {
+            var f = foam.transform.GetChild(0);
+            cam.transform.position = f.position - f.forward * 9f + Vector3.up * 2.4f + f.right * 4f; cam.transform.LookAt(f.position + f.forward * 6f + f.right * 14f); SceneBuilder.Shoot(cam, "dbg_5_shore.png");
+        }
         Debug.Log("[dbg] done");
     }
 

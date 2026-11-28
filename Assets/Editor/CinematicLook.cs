@@ -133,8 +133,8 @@ public static class CinematicLook
 
         // the URP grade, value for value (exposure, saturation and filter belong to the hour: TimeOfDay)
         var ca = Add<ColorAdjustments>();
-        ca.contrast.Override(10f); ca.hueShift.Override(0f);
-        var wb = Add<WhiteBalance>(); wb.temperature.Override(5f); wb.tint.Override(0f);
+        ca.contrast.Override(15f); ca.hueShift.Override(0f);
+        var wb = Add<WhiteBalance>(); wb.temperature.Override(-1f);        // URP had +5; with bounce light off the sand the picture is warm enough wb.tint.Override(0f);
         var smh = Add<ShadowsMidtonesHighlights>();                                   // shade a little cool, sunlight a little warm
         smh.shadows.Override(new Vector4(0.95f, 0.99f, 1.05f, -0.02f)); smh.midtones.Override(new Vector4(1f, 1f, 1f, 0f)); smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.95f, 0f));
         smh.shadowsStart.Override(0f); smh.shadowsEnd.Override(0.3f); smh.highlightsStart.Override(0.55f); smh.highlightsEnd.Override(1f);
@@ -205,7 +205,7 @@ public static class CinematicLook
             {
                 var c = line.Trim().Split(';'); if (c.Length < 4 || c[0] != preset.name) continue;
                 float P(string v) => float.Parse(v, CultureInfo.InvariantCulture);
-                var d = new Vector3(P(c[1]), P(c[2]), P(c[3])); if (d.y < 0.1f) { d.y = 0.1f; }
+                var d = TimeOfDay.SkyDir(new Vector3(P(c[1]), P(c[2]), P(c[3]))); if (d.y < 0.1f) { d.y = 0.1f; }
                 sun.transform.rotation = Quaternion.LookRotation(-d.normalized); EditorUtility.SetDirty(sun.transform);
             }
         TimeOfDay.WriteSun(sun, preset);
@@ -265,16 +265,77 @@ public static class CinematicLook
         w.largeBand0Multiplier = 0.55f; w.largeBand1Multiplier = 0.8f;
         w.ripples = true; w.ripplesWindSpeed = 7f; w.ripplesChaos = 0.9f;
         // colour: clear turquoise in the shallows going to deep blue (refraction with absorption, scattering in the body)
-        w.refractionColor = new Color(0.12f, 0.55f, 0.6f); w.maxRefractionDistance = 0.6f; w.absorptionDistance = 7f;
-        w.scatteringColor = new Color(0.0f, 0.3f, 0.42f); w.ambientScattering = 0.45f; w.heightScattering = 0.2f; w.displacementScattering = 0.25f;
+        w.refractionColor = new Color(0.1f, 0.6f, 0.62f); w.maxRefractionDistance = 0.6f; w.absorptionDistance = 9f;
+        w.scatteringColor = new Color(0.02f, 0.36f, 0.46f); w.ambientScattering = 0.6f; w.heightScattering = 0.2f; w.displacementScattering = 0.25f;
         w.directLightTipScattering = 0.5f; w.directLightBodyScattering = 0.4f;
         w.startSmoothness = 0.95f; w.endSmoothness = 0.85f; w.smoothnessFadeStart = 100f; w.smoothnessFadeDistance = 500f;
         w.tessellation = true; w.maxTessellationFactor = 2f;
-        w.foam = true; w.simulationFoamAmount = 0.25f; w.foamTextureTiling = 0.2f;
+        w.foam = true; w.simulationFoamAmount = 0.25f; w.foamTextureTiling = 0.35f; w.foamPersistenceMultiplier = 0.6f; w.foamSmoothness = 0.2f;
+        w.foamResolution = WaterSurface.WaterDecalRegionResolution.Resolution1024; w.decalRegionSize = new Vector2(240, 240);
+        ShoreFoam(go.transform);
         w.caustics = true; w.causticsIntensity = 0.4f; w.causticsPlaneBlendDistance = 2f; w.virtualPlaneDistance = 3f;
         w.underWater = true; w.volumeBounds = null; w.volumeDepth = 40f;
         EditorUtility.SetDirty(w);
         Debug.Log($"[cinematic] sea: HDRP ocean at y {WaterLevel}, the old water mesh is switched off");
+    }
+
+    // Surf: where the sea meets the land, a line of foam patches (HDRP water decals), laid along the shore from
+    // the map's water cells. Only the shore within reach of the fight: the foam is drawn in a 240 m square that
+    // follows the camera (WaterFollow), and the pipeline takes at most 128 decals.
+    [Serializable] class MapInfo { public float half; public float seaCell; }
+    static void ShoreFoam(Transform ocean)
+    {
+        var old = ocean.Find("Shore foam"); if (old) Object.DestroyImmediate(old.gameObject);
+        var holder = new GameObject("Shore foam").transform; holder.SetParent(ocean, false);
+        var map = JsonUtility.FromJson<MapInfo>(File.ReadAllText("Assets/Benghazi/Data/benghazi_corniche.json"));
+        float half = map.half, cell = map.seaCell; int n = Mathf.RoundToInt(2 * half / cell);
+        var sea = new bool[n, n];
+        foreach (var s in SceneBuilder.ParseSea())
+        {
+            int j = Mathf.Clamp(Mathf.FloorToInt((s[2] + half) / cell + 0.01f), 0, n - 1);
+            int i0 = Mathf.Clamp(Mathf.RoundToInt((s[0] + half) / cell), 0, n), i1 = Mathf.Clamp(Mathf.RoundToInt((s[1] + half) / cell), 0, n);
+            for (int i = i0; i < i1; i++) sea[i, j] = true;
+        }
+        var player = GameObject.Find("Player"); var centre = player ? player.transform.position : Vector3.zero;
+        var placed = new List<Vector3>(); const float step = 9f, reach = 420f; int made = 0;
+        // HDRP's default decal material does not make foam. This is the material its own foam generator used:
+        // a soft-edged rectangle that only writes foam (no deformation of the surface).
+        const string foamPath = "Assets/Benghazi/HDRP/ShoreFoam.mat";
+        const string FoamShaderPath = "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipelineResources/ShaderGraph/Water Decal Sample.shadergraph";
+        var foamShader = AssetDatabase.LoadAssetAtPath<Shader>(FoamShaderPath);
+        var foamMat = AssetDatabase.LoadAssetAtPath<Material>(foamPath);
+        if (!foamMat) { foamMat = new Material(foamShader) { name = "ShoreFoam" }; AssetDatabase.CreateAsset(foamMat, foamPath); }
+        foamMat.shader = foamShader;
+        foamMat.SetFloat("_AffectDeformation", 0f); foamMat.SetFloat("_AffectFoam", 1f); foamMat.SetFloat("_TYPE", 1f);
+        foamMat.SetVector("_Blend_Distance", new Vector4(0.2f, 0.45f, 0, 0));
+        MaterialEditor.ApplyMaterialPropertyDrawers(foamMat); HDMaterial.ValidateMaterial(foamMat); EditorUtility.SetDirty(foamMat);
+        Debug.Log($"[cinematic] shore foam material: shader {foamShader.name}, keywords [{string.Join(" ", foamMat.shaderKeywords)}]");
+        var cand = new List<(Vector3 p, Vector3 toSea)>();
+        for (int j = 1; j < n - 1; j++) for (int i = 1; i < n - 1; i++)
+        {
+            if (!sea[i, j]) continue;
+            Vector3 toLand = Vector3.zero;
+            foreach (var (di, dj) in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) }) if (!sea[i + di, j + dj]) toLand += new Vector3(-di, 0, dj);     // web x -> Unity -x
+            if (toLand == Vector3.zero) continue;
+            float wx = -half + (i + 0.5f) * cell, wz = -half + (j + 0.5f) * cell;
+            var p = new Vector3(-wx, 0, wz) + toLand.normalized * (cell * 0.35f);
+            if ((p - centre).sqrMagnitude < reach * reach) cand.Add((p, -toLand.normalized));
+        }
+        foreach (var (p, toSea) in cand.OrderBy(c => (c.p - centre).sqrMagnitude))
+        {
+            if (made >= 120) break;
+            bool near = false; foreach (var q in placed) if ((q - p).sqrMagnitude < step * step) { near = true; break; }
+            if (near) continue;
+            placed.Add(p);
+            var g = new GameObject("foam"); g.transform.SetParent(holder, false);
+            g.transform.SetPositionAndRotation(new Vector3(p.x, WaterLevel, p.z) + toSea * 1.2f, Quaternion.LookRotation(toSea));
+            var d = g.AddComponent<WaterDecal>();
+            d.material = foamMat; d.resolution = new Vector2Int(64, 64);
+            d.regionSize = new Vector2(step * 1.5f, 5.5f); d.amplitude = 0f; d.surfaceFoamDimmer = 0.75f; d.deepFoamDimmer = 0.6f;
+            made++;
+        }
+        if (!ocean.GetComponent<WaterFollow>()) ocean.gameObject.AddComponent<WaterFollow>();
+        Debug.Log($"[cinematic] shore foam: {made} patches along {cand.Count} shore cells within {reach:F0} m (cell {cell} m)");
     }
 
     // things only the built-in / URP renderers used

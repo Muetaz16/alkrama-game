@@ -45,13 +45,18 @@ public class TimeOfDay : MonoBehaviour
     public static readonly float[] RealSkyExposure = { 0.8f, 0.85f, 0.9f, 1.0f, 0.13f };
 
     // ---- HDRP scale (see the header)
-    public const float ExposureBase = -1.6f;          // EV100 for a preset exposure of 0. Set by eye against the URP build's pictures on the promenade
+    public const float ExposureBase = -1.5f;          // EV100 for a preset exposure of 0. Set by eye against the URP build's pictures on the promenade
                                                       // (HdrpDebug.Expo); -0.26, where HDRP's exposure multiplier is exactly 1, came out 1.3 stops under.
     public const float SunLux = Mathf.PI;             // lux per unit of the old directional-light strength
     public const float FogTop = 90f;                  // the haze thins out above the roofs (m)
     // The photograph is shown darker than it lights: at the exposure the ground needs, the sky as it is would be
     // washed out. Its light and reflections are multiplied back, so the scene is lit exactly as before.
-    public const float SkyShown = 0.5f;
+    public const float SkyShown = 0.62f;
+    // HDRP wraps a lat-long photograph onto its cubemap a quarter turn round from where URP's panoramic skybox
+    // showed it. The sky is turned back, so every hour has its sun over the same part of the city as in the URP
+    // build (the sunset over the sea). SkyYaw turns the light with it; SkyRotation is the HDRI Sky's own setting.
+    public const float SkyYaw = 90f, SkyRotation = 270f;
+    public static Vector3 SkyDir(Vector3 inCubemap) => Quaternion.Euler(0, SkyYaw, 0) * inCubemap;
 
     public static int Current { get; private set; } = 2;
     public static string Name => Presets[Current].name;
@@ -75,12 +80,17 @@ public class TimeOfDay : MonoBehaviour
         r.env.skyType.Override((int)SkyType.HDRI); r.env.skyAmbientMode.Override(SkyAmbientMode.Dynamic);
         if (cube) r.hdri.hdriSky.Override(cube);
         r.hdri.skyIntensityMode.Override(SkyIntensityMode.Multiplier);
-        r.hdri.multiplier.Override(Mathf.Max(0.0001f, skyMul * dip * SkyShown)); r.hdri.exposure.Override(0f); r.hdri.rotation.Override(0f);
+        r.hdri.multiplier.Override(Mathf.Max(0.0001f, skyMul * dip * SkyShown)); r.hdri.exposure.Override(0f); r.hdri.rotation.Override(SkyRotation);
         r.hdri.updateMode.Override(EnvironmentUpdateMode.OnChanged);
 
         // haze. URP's fog was exp(-(d z)^2); HDRP's is exp(-z / meanFreePath). They agree at 150 m with meanFreePath = 1 / (d^2 * 150).
         r.fog.enabled.Override(true);
-        r.fog.colorMode.Override(FogColorMode.ConstantColor); r.fog.color.Override(p.haze); r.fog.tint.Override(Color.white);
+        // the distance fades into the colour of the sky behind it (URP left the sky clear of fog; a constant haze
+        // colour here would lie over the sky as well and wash it out), warmed a little towards the hour's dust
+        float hz = Mathf.Max(p.haze.r, p.haze.g, p.haze.b, 0.001f);
+        r.fog.colorMode.Override(FogColorMode.SkyColor); r.fog.color.Override(p.haze);
+        r.fog.tint.Override(Color.Lerp(Color.white, new Color(p.haze.r / hz, p.haze.g / hz, p.haze.b / hz), 0.45f));
+        r.fog.mipFogNear.Override(0f); r.fog.mipFogFar.Override(600f); r.fog.mipFogMaxMip.Override(0.6f);
         // (matched at 300 m in fact, x 1.6: an exponential haze is far heavier close by than URP's squared one, and
         // close by is where the fight is - the street must stay crisp, the far blocks fade)
         r.fog.meanFreePath.Override(Mathf.Clamp(1.6f / (p.hazeDensity * p.hazeDensity * 300f), 60f, 6000f));
@@ -148,7 +158,7 @@ public class TimeOfDay : MonoBehaviour
                 float P(string v) => float.Parse(v, System.Globalization.CultureInfo.InvariantCulture);
                 var d = new Vector3(P(c[1]), P(c[2]), P(c[3]));
                 if (d.y < 0.1f) { d.y = 0.1f; d.Normalize(); }                 // never from below the roofs: shadows would cover everything
-                lightDir[k] = d.normalized; hasDir[k] = true;
+                lightDir[k] = SkyDir(d.normalized); hasDir[k] = true;
             }
         int start = 2; var a = System.Environment.GetCommandLineArgs();
         for (int i = 0; i < a.Length - 1; i++) if (a[i] == "-time") { int k = Find(a[i + 1]); if (k >= 0) start = k; }
