@@ -114,7 +114,7 @@ public class GraphicsQuality : MonoBehaviour
         i.fog.depthExtent.Override(l.effects == 0 ? 64f : 96f);
         i.shadows.maxShadowDistance.Override(l.shadowDistance);
         i.ao.intensity.Override(l.aoIntensity); i.ao.quality.Override(l.effects);
-        i.blur.intensity.Override(l.motionBlur ? 0.14f : 0f);
+        i.blur.intensity.Override(l.motionBlur ? 0.22f : 0f);
         Light sun = RenderSettings.sun;
         if (!sun) foreach (var x in FindObjectsByType<Light>(FindObjectsInactive.Exclude)) if (x.type == LightType.Directional) { sun = x; break; }
         if (sun && sun.TryGetComponent<HDAdditionalLightData>(out var hd)) { hd.SetShadowResolutionOverride(false); hd.SetShadowResolutionLevel(l.shadowLevel); }

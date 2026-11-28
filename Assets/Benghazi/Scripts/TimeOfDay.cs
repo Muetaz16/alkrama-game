@@ -57,6 +57,9 @@ public class TimeOfDay : MonoBehaviour
     // build (the sunset over the sea). SkyYaw turns the light with it; SkyRotation is the HDRI Sky's own setting.
     public const float SkyYaw = 90f, SkyRotation = 270f;
     public static Vector3 SkyDir(Vector3 inCubemap) => Quaternion.Euler(0, SkyYaw, 0) * inCubemap;
+    // The picture's identity: war documentary, shot on location. Every hour is taken a little under, with less
+    // colour and more dust in the air than the plain presets (the rest of it is in the editor's CinematicLook).
+    public const float DocSaturation = -12f, DocExposure = -0.03f, DocHaze = 1.25f;
 
     public static int Current { get; private set; } = 2;
     public static string Name => Presets[Current].name;
@@ -93,16 +96,17 @@ public class TimeOfDay : MonoBehaviour
         r.fog.mipFogNear.Override(0f); r.fog.mipFogFar.Override(600f); r.fog.mipFogMaxMip.Override(0.6f);
         // (matched at 300 m in fact, x 1.6: an exponential haze is far heavier close by than URP's squared one, and
         // close by is where the fight is - the street must stay crisp, the far blocks fade)
-        r.fog.meanFreePath.Override(Mathf.Clamp(1.6f / (p.hazeDensity * p.hazeDensity * 300f), 60f, 6000f));
+        float dens = p.hazeDensity * DocHaze;
+        r.fog.meanFreePath.Override(Mathf.Clamp(1.6f / (dens * dens * 300f), 60f, 6000f));
         r.fog.baseHeight.Override(-2f); r.fog.maximumHeight.Override(FogTop); r.fog.maxFogDistance.Override(700f);
         float hm = Mathf.Max(p.haze.r, p.haze.g, p.haze.b, 0.001f);
         r.fog.albedo.Override(new Color(p.haze.r / hm, p.haze.g / hm, p.haze.b / hm) * 0.9f);       // what the sun shafts are made of (volumetric fog)
         r.fog.anisotropy.Override(0.6f); r.fog.globalLightProbeDimmer.Override(0.35f);       // sun shafts, not a milky veil of sky light
 
-        r.expo.mode.Override(ExposureMode.Fixed); r.expo.fixedExposure.Override(ExposureBase - p.exposure);
-        Rp.FxExposure(ExposureBase - p.exposure);          // the unlit effects follow the exposure (Benghazi/Fx)
+        r.expo.mode.Override(ExposureMode.Fixed); r.expo.fixedExposure.Override(ExposureBase - p.exposure - DocExposure);
+        Rp.FxExposure(ExposureBase - p.exposure - DocExposure);          // the unlit effects follow the exposure (Benghazi/Fx)
         r.ilc.indirectDiffuseLightingMultiplier.Override(p.skyLight / SkyShown); r.ilc.reflectionLightingMultiplier.Override(Mathf.Clamp01(p.skyLight) / SkyShown * 0.45f);     // steel mirrors the sky: at this exposure a full reflection turns the rifle silver
-        r.grade.saturation.Override(p.saturation); r.grade.colorFilter.Override(p.filter);
+        r.grade.saturation.Override(p.saturation + DocSaturation); r.grade.colorFilter.Override(p.filter);
     }
 
     /// <summary>Sun (or moon) for a time of day.</summary>

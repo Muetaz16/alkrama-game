@@ -11,6 +11,7 @@ public static class GameplaySetup
         if (!player.GetComponent<WeaponController>()) player.AddComponent<WeaponController>();
         if (!player.GetComponent<MarkerTool>()) player.AddComponent<MarkerTool>();
         if (!player.GetComponent<PlayerHealth>()) player.AddComponent<PlayerHealth>();
+        ClearToyProps();
         BakeNavMesh();
         Enemies(player.transform.position);
 
@@ -18,6 +19,7 @@ public static class GameplaySetup
         new GameObject("LighthouseMarker").transform.position = SceneBuilder.FindLighthouse();
         var old = GameObject.Find("Practice Targets"); if (old) Object.DestroyImmediate(old);
         var root = new GameObject("Practice Targets");
+        root.AddComponent<TestOnly>();          // the orange steel figures are for the automated test only: not in a normal game
         var steel = new Material(Shader.Find("Universal Render Pipeline/Lit")); steel.SetColor("_BaseColor", new Color(0.85f, 0.32f, 0.12f)); steel.SetFloat("_Smoothness", 0.35f); steel.SetFloat("_Metallic", 0.4f);
         var post = new Material(Shader.Find("Universal Render Pipeline/Lit")); post.SetColor("_BaseColor", new Color(0.2f, 0.2f, 0.2f));
         AssetDatabase.CreateAsset(steel, "Assets/Benghazi/Materials/TargetSteel.mat");
@@ -63,6 +65,38 @@ public static class GameplaySetup
     }
 
     // re-bake only the walkable map (and the spawn spots that depend on it)
+    // The web city's street props include olive-green oil barrels (flat colour 0.27 / 0.34 / 0.18, 70 cm across,
+    // 95 cm tall, each under a node of its own). The owner asked for them to go: the barrel's node is switched off,
+    // with its collider. Found by that colour and size. Safe to run again.
+    static void ClearToyProps()
+    {
+        var city = GameObject.Find("Benghazi Corniche"); if (!city) return;
+        int n = 0, back = 0;
+        foreach (var r in city.GetComponentsInChildren<MeshRenderer>(true))
+        {
+            var m = r.sharedMaterial; if (!m || !m.HasProperty("baseColorFactor")) continue;
+            var c = m.GetColor("baseColorFactor");
+            // an earlier version of this switched off the small bright-green props instead: those come back
+            bool bright = Mathf.Abs(c.r - 0.15f) < 0.05f && Mathf.Abs(c.g - 0.68f) < 0.06f && Mathf.Abs(c.b - 0.38f) < 0.06f;
+            if (bright && !r.gameObject.activeSelf) { r.gameObject.SetActive(true); back++; continue; }
+            bool olive = Mathf.Abs(c.r - 0.27f) < 0.03f && Mathf.Abs(c.g - 0.34f) < 0.03f && Mathf.Abs(c.b - 0.18f) < 0.03f;
+            if (!olive || !r.gameObject.activeInHierarchy) continue;
+            var s = r.bounds.size; if (s.y < 0.7f || s.y > 1.3f || Mathf.Max(s.x, s.z) > 1.1f) continue;
+            // the barrel's own node, if that holds nothing but the barrel
+            var node = r.transform.parent && r.transform.parent != city.transform && r.transform.parent.childCount <= 4 ? r.transform.parent.gameObject : r.gameObject;
+            node.SetActive(false); n++;
+        }
+        Debug.Log($"[gameplay] {n} olive-green barrels of the web city switched off ({back} small props restored)");
+    }
+
+    // only the prop clean-up, on the saved scene:  -executeMethod GameplaySetup.PropsOnly
+    public static void PropsOnly()
+    {
+        var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
+        ClearToyProps();
+        UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scene);
+    }
+
     public static void NavOnly()
     {
         var scene = UnityEditor.SceneManagement.EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");

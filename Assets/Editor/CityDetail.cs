@@ -636,7 +636,7 @@ public static partial class CityDetail
                     {
                         var dp = c + away * R(-1, 7) + nn * R(-r.half, r.half) * 0.8f;
                         if (!OnRoad(dp, out var y)) continue;
-                        if (R() < 0.6f) Cyl(new Vector3(dp.x, y + 0.44f, dp.z), 0.29f, 0.88f, Quaternion.Euler(0, R(0, 360), 0), drums[rnd.Next(2)], true);
+                        if (R() < 0.6f) { R(0, 360); rnd.Next(2); }       // the painted oil drums are gone (they read as green barrels); the random sequence is kept
                         else Cyl(new Vector3(dp.x, y + 0.11f, dp.z), 0.36f, 0.22f, Quaternion.Euler(R(-5, 5), 0, R(-5, 5)), mTyre);
                     }
                     placed++; done.Add(r); break;

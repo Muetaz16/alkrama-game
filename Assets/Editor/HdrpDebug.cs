@@ -86,6 +86,29 @@ public static class HdrpDebug
         ex.fixedExposure.value = keep;
     }
 
+    // what in the scene is green and barrel-sized, or orange? (to find props by their look)
+    public static void Props()
+    {
+        EditorSceneManager.OpenScene("Assets/Scenes/Corniche.unity");
+        var groups = new System.Collections.Generic.Dictionary<string, (int n, Vector3 size, string eg)>();
+        foreach (var r in Object.FindObjectsByType<MeshRenderer>(FindObjectsInactive.Exclude))
+        {
+            var s = r.bounds.size; if (r.transform.root.name != "Benghazi Corniche" && (Mathf.Max(s.x, s.z) > 3f || s.y > 3f || s.y < 0.2f)) continue;
+            foreach (var m in r.sharedMaterials)
+            {
+                if (!m) continue;
+                Color c = m.HasProperty("baseColorFactor") ? m.GetColor("baseColorFactor") : m.HasProperty("_BaseColor") ? m.GetColor("_BaseColor") : Color.black;
+                bool green = c.g > c.r * 1.12f && c.g > c.b * 1.12f, orange = c.r > 0.6f && c.g > 0.2f && c.g < 0.5f && c.b < 0.25f;
+                if (!green && !orange) continue;
+                string path = ""; for (var x = r.transform; x; x = x.parent) path = x.name + "/" + path;
+                string key = (green ? "GREEN " : "ORANGE ") + m.name + " " + c.ToString("F2") + " tex " + (m.HasProperty("baseColorTexture") && m.GetTexture("baseColorTexture") ? m.GetTexture("baseColorTexture").name : "-") + " verts " + (r.GetComponent<MeshFilter>() && r.GetComponent<MeshFilter>().sharedMesh ? r.GetComponent<MeshFilter>().sharedMesh.vertexCount : 0) + " root " + r.transform.root.name + " parent " + (r.transform.parent ? r.transform.parent.name : "-");
+                groups[key] = groups.TryGetValue(key, out var g) ? (g.n + 1, g.size, g.eg) : (1, s, path);
+            }
+        }
+        foreach (var kv in groups.OrderByDescending(k => k.Value.n).Take(25)) Debug.Log($"[dbg] {kv.Value.n} x {kv.Key} size {kv.Value.size:F2} eg {kv.Value.eg}");
+        Debug.Log("[dbg] props done");
+    }
+
     public static void Mats()
     {
         foreach (var path in new[] { "Assets/Benghazi/Player.prefab", "Assets/Resources/Guns/gun_ak.glb" })

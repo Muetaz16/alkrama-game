@@ -136,13 +136,14 @@ public static class CinematicLook
 
         // the URP grade, value for value (exposure, saturation and filter belong to the hour: TimeOfDay)
         var ca = Add<ColorAdjustments>();
-        ca.contrast.Override(15f); ca.hueShift.Override(0f);
+        ca.contrast.Override(17f);                // documentary stock: firm, but the shade keeps its detail (22 crushed it to black) ca.hueShift.Override(0f);
         var wb = Add<WhiteBalance>(); wb.temperature.Override(-1f);        // URP had +5; with bounce light off the sand the picture is warm enough wb.tint.Override(0f);
         var smh = Add<ShadowsMidtonesHighlights>();                                   // shade a little cool, sunlight a little warm
-        smh.shadows.Override(new Vector4(0.95f, 0.99f, 1.05f, -0.02f)); smh.midtones.Override(new Vector4(1f, 1f, 1f, 0f)); smh.highlights.Override(new Vector4(1.05f, 1.0f, 0.95f, 0f));
+        // the war-documentary split: shade goes cold and a little green (steel, concrete, smoke), sunlight stays warm (dust, sand)
+        smh.shadows.Override(new Vector4(0.9f, 1.0f, 1.06f, -0.03f)); smh.midtones.Override(new Vector4(1f, 0.995f, 0.98f, 0f)); smh.highlights.Override(new Vector4(1.07f, 1.0f, 0.9f, 0f));
         smh.shadowsStart.Override(0f); smh.shadowsEnd.Override(0.3f); smh.highlightsStart.Override(0.55f); smh.highlightsEnd.Override(1f);
         var lgg = Add<LiftGammaGain>();
-        lgg.lift.Override(new Vector4(1f, 1f, 1f, 0.012f)); lgg.gamma.Override(new Vector4(1f, 1f, 1f, 0.06f)); lgg.gain.Override(new Vector4(1f, 1f, 1f, 0f));
+        lgg.lift.Override(new Vector4(0.98f, 1f, 1.03f, 0.035f));       // blacks lifted a touch and cool: nothing crushed, like a print lgg.gamma.Override(new Vector4(1f, 1f, 1f, 0.06f)); lgg.gain.Override(new Vector4(1f, 1f, 1f, 0f));
         var curves = Add<ColorCurves>();                                                // ~15 % out of sand-yellow, ~10 % out of sky blue
         curves.hueVsSat.Override(new TextureCurve(new[]
         {
@@ -151,10 +152,10 @@ public static class CinematicLook
         }, 0.5f, true, new Vector2(0f, 1f)));
 
         var bloom = Add<Bloom>();
-        bloom.threshold.Override(1.1f); bloom.intensity.Override(0.16f); bloom.scatter.Override(0.6f); bloom.tint.Override(Color.white);
+        bloom.threshold.Override(1.0f); bloom.intensity.Override(0.2f); bloom.scatter.Override(0.72f); bloom.tint.Override(new Color(1f, 0.96f, 0.9f));     // light flares softly through dusty glass
         var vig = Add<Vignette>();
-        vig.mode.Override(VignetteMode.Procedural); vig.color.Override(Color.black); vig.intensity.Override(0.2f); vig.smoothness.Override(0.4f); vig.rounded.Override(false);
-        var grain = Add<FilmGrain>(); grain.type.Override(FilmGrainLookup.Thin1); grain.intensity.Override(0.14f); grain.response.Override(0.8f);
+        vig.mode.Override(VignetteMode.Procedural); vig.color.Override(Color.black); vig.intensity.Override(0.26f); vig.smoothness.Override(0.4f); vig.rounded.Override(false);
+        var grain = Add<FilmGrain>(); grain.type.Override(FilmGrainLookup.Medium1); grain.intensity.Override(0.2f); grain.response.Override(0.75f);     // 16 mm news stock, mostly in the shade
         var flare = Add<ScreenSpaceLensFlare>();
         flare.intensity.Override(0.55f); flare.tintColor.Override(new Color(1f, 0.93f, 0.82f));
         flare.firstFlareIntensity.Override(0.6f); flare.secondaryFlareIntensity.Override(0.35f); flare.warpedFlareIntensity.Override(0.3f);
@@ -163,7 +164,7 @@ public static class CinematicLook
         Add<ChromaticAberration>().intensity.Override(0.03f);
         // per-object motion vectors: the gun and arms move with the camera, so they stay sharp while the street streaks a little
         var mb = Add<MotionBlur>();
-        mb.intensity.Override(0.14f); mb.maximumVelocity.Override(60f); mb.minimumVelocity.Override(2f);
+        mb.intensity.Override(0.22f);         // a hand-held camera's shutter mb.maximumVelocity.Override(60f); mb.minimumVelocity.Override(2f);
         mb.cameraRotationVelocityClamp.Override(0.03f);
 
         // ---- what HDRP adds over URP (GraphicsQuality switches these per level at run time)
