@@ -209,21 +209,25 @@ public class AutoTest : MonoBehaviour
         // tactical reload (rounds left): fresh mag strips the old one, old one kept, one stays chambered
         int before2 = gun.W.mag;
         gun.reloadPressed = true;
-        yield return new WaitForSeconds(0.45f);
+        float t0 = Time.time, tlen = gun.ReloadLen(true);
+        IEnumerator UntilT(float u) { while (Time.time - t0 < tlen * u) yield return null; }
+        yield return UntilT(0.13f);
         yield return Shot("fp_reload_pouch.png");
-        yield return new WaitForSeconds(0.42f);
-        yield return Shot("fp_reload_magout.png");
+        yield return UntilT(0.34f);
+        yield return Shot("fp_reload_magout.png");              // the fresh magazine beside the one in the rifle, both in the hand
+        yield return Inspect("inspect_tac_two_mags.png", new Vector3(-0.5f, -0.05f, 0.3f), new Vector3(0f, -0.14f, 0.3f));
         log.WriteLine("reload debug: " + gun.View.ReloadDebug());
-        yield return new WaitForSeconds(0.42f);
+        yield return UntilT(0.49f);
         yield return Shot("fp_reload_magin.png");
-        yield return new WaitForSeconds(1.4f);
+        yield return UntilT(1.1f);
         log.WriteLine($"tactical reload: tactical {gun.LastReloadTactical}, mag {before2} -> {gun.W.mag}, reserve {gun.W.reserve}");
         // emergency reload (empty): old mag drops, fresh one in, charging handle racked
         gun.W.mag = 0; gun.reloadPressed = true;
-        float r0 = Time.time, rlen = gun.W.reloadTime * 0.95f;
+        float r0 = Time.time, rlen = gun.ReloadLen(false);
         IEnumerator Until(float u) { while (Time.time - r0 < rlen * u) yield return null; }
         yield return Until(0.22f);
         yield return Shot("fp_reload_draw.png");                // the fresh mag coming up from the chest rig
+        yield return Inspect("inspect_reload_up.png", new Vector3(-0.75f, 0.02f, 0.2f), new Vector3(0f, -0.08f, 0.3f));
         yield return Until(ViewModel.ReloadStripAt);
         yield return Shot("fp_reload_drop.png");                // the fresh mag knocks the empty one out
         yield return Until(ViewModel.ReloadUnderAt);
@@ -256,17 +260,18 @@ public class AutoTest : MonoBehaviour
         int hitsL = gun.hits; gun.fireHeld = true; yield return new WaitForSeconds(0.3f); gun.fireHeld = false; gun.aimHeld = false;
         log.WriteLine($"left shoulder burst at {Vector3.Distance(near.transform.position, player.transform.position):F0} m: {gun.hits - hitsL} hits, shoulder side {gun.View.ShoulderSide:F2}");
         yield return new WaitForSeconds(0.5f);
-        gun.reloadPressed = true; yield return new WaitForSeconds(0.9f);
+        gun.reloadPressed = true; yield return new WaitForSeconds(gun.ReloadLen(true) * 0.36f);
         yield return Shot("fp_left_reload.png");
-        yield return new WaitForSeconds(1.9f);
+        yield return new WaitForSeconds(gun.ReloadLen(true) * 0.75f);
         // and with the magazine empty: from the left shoulder the right hand changes the magazine and then
         // racks the handle itself, straight away - the rifle must not be ready before the bolt has been drawn
         gun.W.mag = 0; gun.reloadPressed = true;
-        float l0 = Time.time, llen = gun.W.reloadTime * 0.95f, drawn = 0; int roundsAtRack = -1;
+        bool upShot = false; float l0 = Time.time, llen = gun.ReloadLen(false), drawn = 0; int roundsAtRack = -1;
         while (Time.time - l0 < llen * 1.1f)
         {
             float u = (Time.time - l0) / llen, bb = gun.View.BoltBack(0);
             if (bb > drawn) { drawn = bb; roundsAtRack = gun.W.mag; }
+            if (u > 0.3f && !upShot) { upShot = true; yield return Shot("fp_left_reload_up.png"); }
             if (u > ViewModel.ReloadRackAt - 0.03f && u < ViewModel.ReloadRackAt && !rackShot) { rackShot = true; yield return Shot("fp_left_rack.png"); yield return Inspect("inspect_left_rack.png", new Vector3(0.5f, -0.02f, 0.34f), new Vector3(-0.07f, -0.13f, 0.4f)); }
             yield return null;
         }
@@ -344,7 +349,7 @@ public class AutoTest : MonoBehaviour
             LookAt(near.transform.position + Vector3.up * 0.55f);
             before = gun.knifeHits; gun.forceKnife = kind;
             if (ViewModel.Heavy(kind)) { gun.aimHeld = true; yield return null; gun.aimHeld = false; } else gun.fireHeld = true;
-            float len = ViewModel.KnifeTime(kind);
+            float len = ViewModel.KnifeTime(kind, 1f);
             yield return new WaitForSeconds(len * 0.3f);
             if (kind >= ViewModel.StabDown) yield return Inspect($"inspect_knife_reverse_{kind}.png", KnifeFrom + new Vector3(0, 0.1f, 0), KnifeAt + new Vector3(-0.03f, 0.12f, -0.04f));
             yield return new WaitForSeconds(len * 0.16f);
@@ -357,6 +362,20 @@ public class AutoTest : MonoBehaviour
             yield return new WaitForSeconds(3.3f);             // let the target stand up again
         }
         log.WriteLine($"knife: {landed} of 5 attacks landed at 0.9 m");
+        // the quick combinations as the player gets them: six presses in a row, then a pause and three more
+        string seq = ""; int comboHits = 0;
+        for (int i = 0; i < 9; i++)
+        {
+            if (i == 6) yield return new WaitForSeconds(1.3f);
+            LookAt(near.transform.position + Vector3.up * 0.55f);
+            before = gun.knifeHits; gun.fireHeld = true;
+            yield return new WaitForSeconds(0.12f);
+            float tl = ViewModel.KnifeTime(gun.View.LastKnife, gun.LastKnifeSize);
+            if (i == 0) { yield return new WaitForSeconds(tl * 0.3f); yield return Inspect("inspect_knife_cut.png", KnifeFrom, KnifeAt); }
+            yield return new WaitForSeconds(tl + 0.02f);
+            seq += $"{(gun.View.LastKnife == ViewModel.Thrust ? "thrust" : "cut")}{(gun.LastKnifeSide > 0 ? "+" : "-")}{(gun.LastKnifeSize < 0.8f ? "s" : "L")} "; comboHits += gun.knifeHits - before;
+        }
+        log.WriteLine($"knife combinations (+ forehand, - backhand, L large, s short): {seq}; hits {comboHits}");
         gun.switchTo = 0;
         yield return new WaitForSeconds(0.6f);
         log.Flush();

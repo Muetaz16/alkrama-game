@@ -24,7 +24,7 @@ public class WeaponController : MonoBehaviour
 
     public Weapon[] weapons =
     {
-        new Weapon { name = "AK-47", auto = true, rpm = 600, damage = 34, spread = 1.1f, aimSpread = 0.06f, recoil = 0.9f, range = 450, muzzleVelocity = 715, magSize = 30, reserve = 180, reloadTime = 2.4f, aimFov = 50 },
+        new Weapon { name = "AK-47", auto = true, rpm = 600, damage = 34, spread = 1.1f, aimSpread = 0.06f, recoil = 0.9f, range = 450, muzzleVelocity = 715, magSize = 30, reserve = 180, reloadTime = 3.5f, aimFov = 50 },
         new Weapon { name = "SNIPER", auto = false, rpm = 45, damage = 120, spread = 4f, aimSpread = 0.012f, recoil = 4f, range = 1200, muzzleVelocity = 850, magSize = 5, reserve = 30, reloadTime = 2.7f, aimFov = 11, scope = true },
         new Weapon { name = "KNIFE", melee = true, rpm = 140, damage = 100, range = 1.05f },          // a knife works at contact distance: an arm and a blade, no more
     };
@@ -224,10 +224,13 @@ public class WeaponController : MonoBehaviour
 
     bool tacticalReload;
     public bool LastReloadTactical => tacticalReload;
+    // timed from the AK video the owner gave: about 3.5 s with the magazine empty (racking included), nearer
+    // 4.5 s when the part-used magazine is kept and stowed
+    public float ReloadLen(bool tactical) => W.reloadTime * (tactical ? 1.3f : 0.97f);
     void StartReload()
     {
         tacticalReload = W.mag > 0;                                 // rounds left: tactical; empty: emergency
-        float t = W.reloadTime * (tacticalReload ? 1.05f : 0.95f);
+        float t = ReloadLen(tacticalReload);
         reloading = true; reloadEnd = Time.time + t; vm.Reload(current, t, tacticalReload);
     }
 
@@ -370,15 +373,36 @@ public class WeaponController : MonoBehaviour
             var to = Vector3.ProjectOnPlane(near.transform.position - ct.position, Vector3.up).normalized;
             side = Vector3.Dot(to, ct.right) < -0.45f;                  // off to the support side: the backhand reaches him
         }
-        float r = Random.value; int kind;
-        if (heavy) kind = low ? (r < 0.8f ? ViewModel.StabDown : ViewModel.Thrust) : side ? (r < 0.6f ? ViewModel.RipBack : ViewModel.Thrust) : (r < 0.6f ? ViewModel.Thrust : r < 0.85f ? ViewModel.StabDown : ViewModel.RipBack);
-        else kind = low ? (r < 0.7f ? ViewModel.CutDown : ViewModel.CutAcross) : (r < 0.6f ? ViewModel.CutAcross : ViewModel.CutDown);
-        if (kind == lastKnife && kind != ViewModel.CutAcross && Random.value < 0.6f) kind = heavy ? (kind == ViewModel.Thrust ? ViewModel.StabDown : ViewModel.Thrust) : ViewModel.CutAcross;
-        if (forceKnife >= 0) { kind = forceKnife; forceKnife = -1; }
-        lastKnife = kind;
-        vm.KnifeAttack(kind);
-        nextShot = Time.time + ViewModel.KnifeTime(kind) + 0.04f;
+        float r = Random.value; int kind; float kSide = 0, kSize = 1;
+        if (heavy)
+        {
+            // committed: reverse-grip stab down on a low target, a backhand rip to the side, otherwise a driven thrust
+            kind = low ? (r < 0.8f ? ViewModel.StabDown : ViewModel.Thrust) : side ? (r < 0.6f ? ViewModel.RipBack : ViewModel.Thrust) : (r < 0.6f ? ViewModel.Thrust : r < 0.85f ? ViewModel.StabDown : ViewModel.RipBack);
+            if (kind == lastKnife && Random.value < 0.6f) kind = kind == ViewModel.Thrust ? ViewModel.StabDown : ViewModel.Thrust;
+            combo = 3;
+        }
+        else
+        {
+            // Quick attacks run as the two basic combinations (Kali): angle 1, angle 2, forehand thrust - or
+            // angle 2, angle 1, backhand thrust. The cuts come large (full chamber) or short, mixed, so the
+            // rhythm is never the same twice; the thrust is a jab, straight in and out. Leave it a moment and
+            // the next attack starts a new combination.
+            if (combo >= 3 || Time.time - lastKnifeAt > 0.95f) { combo = 0; comboBack = Random.value < 0.5f; }
+            float first = comboBack ? -1 : 1;
+            if (combo == 0) { kind = ViewModel.CutDown; kSide = first; }
+            else if (combo == 1) { kind = ViewModel.CutDown; kSide = -first; }
+            else { kind = ViewModel.Thrust; kSide = first; }
+            kSize = combo < 2 ? (Random.value < 0.5f ? 1f : 0.6f) : 0.85f;
+            combo++;
+        }
+        if (forceKnife >= 0) { kind = forceKnife; forceKnife = -1; kSide = 0; kSize = 1; }
+        lastKnife = kind; lastKnifeAt = Time.time; LastKnifeSide = kSide; LastKnifeSize = kSize;
+        vm.KnifeAttack(kind, kSide, kSize);
+        nextShot = Time.time + ViewModel.KnifeTime(kind, kSize) + 0.03f;
     }
+    int combo = 3; bool comboBack; float lastKnifeAt = -9;
+    public float LastKnifeSide { get; private set; }
+    public float LastKnifeSize { get; private set; } = 1;
     [HideInInspector] public int forceKnife = -1;          // the test asks for one attack by name
 
     void MeleeHit(bool heavy)

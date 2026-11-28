@@ -177,6 +177,15 @@ public class ViewModel : MonoBehaviour
         // small lift and roll of the magwell towards the working hand while the magazines change.
         float work = Sm(u, 0f, 0.1f) * (1 - Sm(u, tac ? 0.66f : RSeated + 0.02f, tac ? 0.86f : RUnder + 0.04f));
         pos += new Vector3(-0.012f, 0.012f, -0.03f) * work * (1 - a * 0.5f); rot += new Vector3(-3f, 2.5f, -9f) * work;
+        // Empty magazine, as the video from the owner shows it: the rifle does not stay level. The muzzle goes up
+        // 45 degrees or so, the stock slides off the shoulder down against the chest, and the rifle rolls so
+        // the magazine faces the working hand; the receiver is in front of the face and the eyes stay on the
+        // target over it. It comes back down onto the target as the hand returns to the handguard.
+        if (!tac && w == AK)
+        {
+            float up = Sm(u, 0.02f, 0.14f) * (1 - Sm(u, RHandBack + 0.02f, 0.97f));
+            rot += new Vector3(-42f, 3f, -9f) * up; pos += new Vector3(-0.02f, -0.035f, -0.06f) * up;
+        }
         float back = 0;
         if (!tac)
         {
@@ -199,6 +208,10 @@ public class ViewModel : MonoBehaviour
         var round = (pouchOff + behind) * 0.5f + new Vector3(-0.09f * side, -0.05f, -0.05f);      // out on the working side, under the rifle
         // fresh mag: out of the pouch -> round behind the old one -> sweep forward on the paddle -> front lug in -> rocked home
         spare[w].gameObject.SetActive(u >= RMagOut);
+        // tactical: it comes up BESIDE the one in the rifle instead, the hand takes hold of both, the thumb
+        // presses the paddle and the old one rocks out still in the hand; the hand shifts across and the fresh one goes in
+        Vector3 rel = new(-0.034f * side, -0.03f, -0.004f), beside = new Vector3(0, -0.012f, 0) - rel;
+        if (tac) { behind = beside; onPaddle = beside; }
         if (u < RBehind) { float t = Sm(u, RMagOut, RBehind); spOff = Arc(pouchOff, round, behind, t); spAng = Mathf.Lerp(-22f, 0, t); }
         else if (u < RStrip) { float t = Sm(u, RBehind, RStrip); spOff = Vector3.Lerp(behind, onPaddle, t); spAng = 0; }
         else if (u < RLug) { float t = Sm(u, RStrip, RLug); spOff = Vector3.Lerp(onPaddle, lugIn, t); spAng = 24f * t; }
@@ -213,8 +226,11 @@ public class ViewModel : MonoBehaviour
             if (!dropped) { dropped = true; DropMag(w); }
             mag[w].gameObject.SetActive(false);
         }
-        else if (u < RSeated) { oldOff = spOff + new Vector3(0, -0.04f, -0.07f); oldAng = spAng; }
-        else if (u < 0.72f) { float t = Sm(u, RSeated, 0.72f); oldOff = Arc(new Vector3(0, -0.04f, -0.07f), round, pouchOff, t); oldAng = -22f * t; }
+        // tactical: the two magazines side by side in the one hand while the full one is rocked in, then the
+        // fingers slide the part-used one away and it goes back into the pouch
+        else if (u < RLug) { float t = Sm(u, RStrip, RLug); oldOff = Vector3.Lerp(new Vector3(0, -0.03f, 0.01f), spOff + rel, t); oldAng = Mathf.Lerp(24f, spAng, t); }
+        else if (u < RSeated) { oldOff = spOff + rel; oldAng = spAng; }
+        else if (u < 0.72f) { float t = Sm(u, RSeated, 0.72f); oldOff = Arc(rel, round, pouchOff, t); oldAng = -22f * t; }
         else mag[w].gameObject.SetActive(false);
         if (mag[w].gameObject.activeSelf) PoseMag(mag[w], w, oldAng, oldOff);
         if (bolt[w]) bolt[w].localPosition = boltHome[w] + new Vector3(0, 0, -0.085f) * back;
@@ -269,19 +285,23 @@ public class ViewModel : MonoBehaviour
     //   and a backhand rip. The knife is turned in the hand during the wind-up and turned back afterwards.
     // The weapon picks the attack from what is in front (see WeaponController.Knife).
     public const int CutAcross = 0, CutDown = 1, Thrust = 2, StabDown = 3, RipBack = 4;
-    static readonly float[] KnifeLen = { 0.42f, 0.5f, 0.6f, 0.72f, 0.6f }, KnifeHitAt = { 0.4f, 0.46f, 0.48f, 0.52f, 0.5f };
+    static readonly float[] KnifeLen = { 0.42f, 0.5f, 0.4f, 0.72f, 0.6f }, KnifeHitAt = { 0.4f, 0.46f, 0.46f, 0.52f, 0.5f };      // the thrust is a jab: in and out
     static bool ReverseGrip(int kind) => kind >= StabDown;
     public static bool Heavy(int kind) => kind >= Thrust;
     public static float KnifeTime(int kind) => KnifeLen[kind];
     public int LastKnife => knifeKind;
     int knifeKind; float reverseT;
-    public void KnifeAttack(int kind)
+    // side: +1 forehand (from the knife side: an "angle 1" cut, a forehand thrust), -1 backhand ("angle 2", backhand thrust).
+    // size: 1 a full cut from a full chamber, about 0.6 a short one - quicker, less of an opening.
+    float knifeSize = 1;
+    public static float KnifeTime(int kind, float size) => KnifeLen[kind] * Mathf.Lerp(0.62f, 1f, Mathf.InverseLerp(0.5f, 1f, size));
+    public void KnifeAttack(int kind, float side = 0, float size = 1)
     {
-        knifeKind = Mathf.Clamp(kind, 0, 4);
-        knifeAnim.side = knifeKind == CutAcross ? -knifeAnim.side : 1;
+        knifeKind = Mathf.Clamp(kind, 0, 4); knifeSize = Mathf.Clamp(size, 0.5f, 1f);
+        knifeAnim.side = side != 0 ? Mathf.Sign(side) : knifeKind == CutAcross ? -knifeAnim.side : 1;
         if (knifeAnim.side == 0) knifeAnim.side = 1;
         heavyKnife = Heavy(knifeKind);
-        Play(knifeAnim, Knife, KnifeLen[knifeKind]);
+        Play(knifeAnim, Knife, KnifeTime(knifeKind, knifeSize));
         onSound?.Invoke("swish");
     }
     bool heavyKnife;
@@ -398,7 +418,7 @@ public class ViewModel : MonoBehaviour
         // back of the receiver cover coming up into the bottom of the picture, the sights a few centimetres
         // under the line of sight. Aiming is then only a small drop of the head onto them - not a swing in
         // from the side. The firing hand is under the stock, almost out of sight.
-        var ready = w == Knife ? HipPos[w] : adsPos + new Vector3(0.026f, -0.042f, 0.225f);        // far enough out to see the whole receiver cover and the first of the wooden stock behind it       // the eye a hand's breadth behind the receiver cover: its back end and the comb of the stock fill the bottom of the view
+        var ready = w == Knife ? HipPos[w] : adsPos + new Vector3(0.026f, -0.06f, 0.32f);        // far enough out to see the whole receiver cover and the first of the wooden stock behind it       // the eye a hand's breadth behind the receiver cover: its back end and the comb of the stock fill the bottom of the view
         var readyRot = w == Knife ? HipRot[w] : new Vector3(0.4f, -0.6f, 1.2f);
         var pos = Vector3.Lerp(ready, adsPos, a);
         var rot = Vector3.Lerp(readyRot, Vector3.zero, a);
@@ -476,8 +496,8 @@ public class ViewModel : MonoBehaviour
         if (Playing(knifeAnim) && w == Knife)
         {
             Eval(KnifeKeys(knifeKind), U(knifeAnim), out p, out r);
-            float s = knifeAnim.side;
-            pos += new Vector3(p.x * s, p.y, p.z); rot += new Vector3(r.x, r.y * s, r.z * s);
+            float s = knifeAnim.side, z = knifeSize;
+            pos += new Vector3(p.x * s, p.y, p.z) * z; rot += new Vector3(r.x, r.y * s, r.z * s) * z;
         }
         if (switching)
         {
@@ -679,10 +699,14 @@ public class ViewModel : MonoBehaviour
         else if (held && held.gameObject.activeSelf)
         {
             // a magazine in the fist: gripped low on its body from the support side, index finger up its front
-            var c = held.TransformPoint(magCentre[w] - magHome[w] + new Vector3(0, -0.06f, 0));
+            // fast reload: a full grip round the body of the magazine. Tactical reload: gripped lower, so there
+            // is room in the same hand for the part-used magazine beside it
+            var c = held.TransformPoint(magCentre[w] - magHome[w] + new Vector3(0, tacReload ? -0.082f : -0.06f, 0));
             Vector3 hf = held.forward, hu = held.up;
             g.wrist = c - hf * 0.055f - rs * 0.03f - hu * 0.01f; g.rot = Basis(hf * 0.95f + rs * 0.15f, hu);
-            g.i = 0.7f; g.m = 0.85f; g.r = 0.9f; g.l = 0.9f; g.t = 0.5f;
+            // the index finger lies straight up the front of the magazine: it finds the magazine well and guides the
+            // front lug in; the thumb is free on its own side (it is what works the magazine catch)
+            g.i = 0.12f; g.m = 0.95f; g.r = 1f; g.l = 1f; g.t = 0.35f;
         }
         else if (kind == 4)
         {
@@ -712,8 +736,10 @@ public class ViewModel : MonoBehaviour
         {
             // wrapped round the handguard from underneath, thumb forward along its side
             Vector3 fingers = rs * 0.72f + u * 0.5f;
-            g.wrist = gm.TransformPoint(gripL[w]) - fingers.normalized * 0.058f - u * 0.032f - rs * 0.012f; g.rot = Basis(fingers, f);
-            g.i = 0.88f; g.m = 0.96f; g.r = 0.96f; g.l = 0.92f; g.t = 0.45f;
+            g.wrist = gm.TransformPoint(gripL[w]) - fingers.normalized * 0.05f - u * 0.02f - rs * 0.006f; g.rot = Basis(fingers, f);
+            // as in the video from the owner: the lower handguard lies in the palm, the fingers wrap up its far side
+            // and stop on the wood - not over the gas tube - and the thumb lies forward along the near side
+            g.i = 0.98f; g.m = 1.04f; g.r = 1.04f; g.l = 1f; g.t = 0.4f;
         }
         return g;
     }
@@ -785,16 +811,26 @@ public class ViewModel : MonoBehaviour
             // While the knife turns the fingers open just enough to let it through.
             float open = turning * 0.35f, sq = attacking ? 1f : 0.94f;
             Place(0, new Grip { wrist = hf.position - kf.normalized * 0.07f, rot = Basis(kf, ka), pole = -ct.up + ct.right * 0.7f - ct.forward * 0.2f,
-                i = (0.96f - open) * sq, m = (1f - open) * sq, r = 1f * sq - open * 0.5f, l = 1f * sq - open * 0.3f, t = Mathf.Lerp(0.72f, 1f, rv) - open });
+                i = (1.12f - open) * sq, m = (1.2f - open) * sq, r = 1.22f * sq - open * 0.5f, l = 1.22f * sq - open * 0.3f, t = Mathf.Lerp(1.05f, 1.2f, rv) - open });
             if (midH[0] && idxH[0] && litH[0])
             {
                 var h = arm[0][2]; Vector3 aF = (midH[0].position - h.position).normalized, aA = (idxH[0].position - litH[0].position).normalized;
                 var palm = Vector3.Cross(aF, aA).normalized;
-                var centre = midH[0].position + palm * 0.03f - aF * 0.012f;
+                var centre = midH[0].position + palm * 0.021f - aF * 0.016f;          // the handle deep in the fist, against the root of the fingers
                 // blade out of the thumb side (forward grip); half a turn about the palm puts it out of the little-finger side
                 gm.SetPositionAndRotation(centre, Quaternion.AngleAxis(180f * rv, palm) * Quaternion.LookRotation(aA, -palm));
             }
             return;
+        }
+        // The rifle is held well out in front: the body comes forward with it far enough for the support hand to
+        // close on the handguard (an arm that cannot reach leaves an open hand hanging short of it).
+        if (!Playing(reloadAnim) && sprintT < 0.01f && deadT <= 0)
+        {
+            int sa = k >= 0.5f ? 1 : 0; float ss = sa == 1 ? 1 : -1;
+            var want = Support(w, ss, 0).wrist; var sh = arm[sa][0].position;
+            float reach = (Vector3.Distance(arm[sa][0].position, arm[sa][1].position) + Vector3.Distance(arm[sa][1].position, arm[sa][2].position)) * 0.95f;
+            float over = Vector3.Distance(sh, want) - reach;
+            if (over > 0) arms.position += (want - sh).normalized * Mathf.Min(over, 0.25f);
         }
         // which hand does what: k = 1 the right hand fires, 0 the left one does (support-side shoulder)
         bool reloading = Playing(reloadAnim) && reloadAnim.weapon == w;
