@@ -233,9 +233,9 @@ MonoBehaviour:
     waterSimulationResolution: 128
     supportWaterExclusion: 0
     supportWaterHorizontalDeformation: 0
-    supportWaterDecals: 0
+    supportWaterDecals: 1
     waterDecalAtlasSize: 1024
-    maximumWaterDecalCount: 48
+    maximumWaterDecalCount: 128
     waterScriptInteractionsMode: 0
     waterFullCPUSimulation: 0
     waterCausticsMeshResolution: 256
